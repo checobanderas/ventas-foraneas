@@ -73,6 +73,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   const selectedTruckObj = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
   const selectedTruckStatus = selectedTruckObj?.status || 'bodega';
   const isWorkshopLocked = selectedTruckStatus === 'taller';
+  const isConfigDisabled = isWorkshopLocked || selectedTruckStatus === 'transito';
 
   const updateActiveTruckInventory = async (updatedProducts: Product[]) => {
     if (!truckPlates) return;
@@ -94,11 +95,16 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   // Save config changes to localStorage
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!driverName || !truckPlates || !routeId) {
+      alert("Por favor selecciona chofer, ruta y placas.");
+      return;
+    }
+
     localStorage.setItem('active_route_id', routeId);
     localStorage.setItem('active_truck_plates', truckPlates);
     localStorage.setItem('active_driver_name', driverName);
     
-    // Sync status and details of active truck
+    // Sync status and details of active truck to 'esperando_salida'
     const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
     if (matchedTruck) {
       const inventory: { [productId: string]: number } = {};
@@ -109,7 +115,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
       });
       await syncService.updateTruck({
         ...matchedTruck,
-        status: 'transito',
+        status: 'esperando_salida',
         activeDriver: driverName || null,
         activeRoute: routeId || null,
         inventory,
@@ -117,8 +123,65 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
       });
     }
     
-    alert('Configuración de la camioneta guardada con éxito.');
+    alert('Configuración de la camioneta guardada. La unidad está lista en bodega esperando carga e inventario para dar el banderazo de salida.');
     onInventoryUpdated();
+  };
+
+  // Dispatch Unit (Banderazo de Salida)
+  const handleBanderazoSalida = async () => {
+    if (!driverName || !truckPlates || !routeId) {
+      alert("Por favor configura el chofer, ruta y placas de la unidad antes de dar la salida.");
+      return;
+    }
+
+    // Validate that truck inventory is loaded and greater than zero
+    const totalLoadedItems = products.reduce((sum, p) => sum + (p.truckStock || 0), 0);
+    if (totalLoadedItems === 0) {
+      alert("⚠️ No se puede dar salida a la camioneta con inventario vacío. Carga mercancía en la camioneta antes de partir.");
+      return;
+    }
+
+    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+    if (matchedTruck) {
+      const inventory: { [productId: string]: number } = {};
+      products.forEach(p => {
+        if (p.truckStock && p.truckStock > 0) {
+          inventory[p.id] = p.truckStock;
+        }
+      });
+
+      await syncService.updateTruck({
+        ...matchedTruck,
+        status: 'transito',
+        activeDriver: driverName,
+        activeRoute: routeId,
+        inventory,
+        salesToday: 0
+      });
+
+      // Confirm settings in localStorage
+      localStorage.setItem('active_route_id', routeId);
+      localStorage.setItem('active_truck_plates', truckPlates);
+      localStorage.setItem('active_driver_name', driverName);
+
+      alert("🚀 ¡Banderazo de salida exitoso! La camioneta ha sido puesta en tránsito y está lista para vender.");
+      onInventoryUpdated();
+    } else {
+      alert("Error: No se encontró la unidad seleccionada.");
+    }
+  };
+
+  // Populate driver and route state when unit plates dropdown changes
+  const handleTruckPlatesChange = (plates: string) => {
+    setTruckPlates(plates);
+    const matched = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === plates);
+    if (matched) {
+      setDriverName(matched.activeDriver || '');
+      setRouteId(matched.activeRoute || '');
+    } else {
+      setDriverName('');
+      setRouteId('');
+    }
   };
 
   // Adjust Truck Stock & Loaded stock
@@ -346,12 +409,12 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     <span style={{
                       fontSize: '0.75rem',
                       fontWeight: 700,
-                      color: selectedTruckStatus === 'transito' ? 'var(--accent-color)' : selectedTruckStatus === 'taller' ? 'var(--danger-color)' : 'var(--text-secondary)',
-                      background: selectedTruckStatus === 'transito' ? 'rgba(16, 185, 129, 0.15)' : selectedTruckStatus === 'taller' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(0,0,0,0.05)',
+                      color: selectedTruckStatus === 'transito' ? 'var(--accent-color)' : selectedTruckStatus === 'esperando_salida' ? 'var(--secondary-color)' : selectedTruckStatus === 'taller' ? 'var(--danger-color)' : 'var(--text-secondary)',
+                      background: selectedTruckStatus === 'transito' ? 'rgba(16, 185, 129, 0.15)' : selectedTruckStatus === 'esperando_salida' ? 'rgba(59, 130, 246, 0.15)' : selectedTruckStatus === 'taller' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(0,0,0,0.05)',
                       padding: '0.25rem 0.6rem',
                       borderRadius: '6px'
                     }}>
-                      {selectedTruckStatus === 'transito' ? '🛣️ En Tránsito' : selectedTruckStatus === 'taller' ? '🔧 En Taller (Bloqueada)' : '🏭 Parada en Bodega'}
+                      {selectedTruckStatus === 'transito' ? '🛣️ En Tránsito' : selectedTruckStatus === 'esperando_salida' ? '⏳ Esperando Salida' : selectedTruckStatus === 'taller' ? '🔧 En Taller (Bloqueada)' : '🏭 Parada en Bodega'}
                     </span>
                   )}
                 </div>
@@ -372,7 +435,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         value={driverName}
                         onChange={(e) => setDriverName(e.target.value)}
                         style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                        disabled={isWorkshopLocked}
+                        disabled={isConfigDisabled}
                       >
                         <option value="">Seleccionar Chofer</option>
                         {users
@@ -392,7 +455,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         value={routeId}
                         onChange={(e) => setRouteId(e.target.value)}
                         style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                        disabled={isWorkshopLocked}
+                        disabled={isConfigDisabled}
                       >
                         <option value="">Seleccionar</option>
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(r => (
@@ -406,7 +469,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                       <select
                         className="form-control"
                         value={truckPlates}
-                        onChange={(e) => setTruckPlates(e.target.value)}
+                        onChange={(e) => handleTruckPlatesChange(e.target.value)}
                         style={{ padding: '0.45rem', fontSize: '0.85rem' }}
                       >
                         <option value="">Seleccionar Unidad</option>
@@ -422,12 +485,40 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                       type="submit" 
                       className="btn btn-primary"
                       style={{ width: 'auto', padding: '0.55rem 1rem', fontSize: '0.85rem', height: '38px' }}
-                      disabled={isWorkshopLocked}
+                      disabled={isConfigDisabled}
                     >
                       Guardar 💾
                     </button>
                   </div>
                 </form>
+
+                {/* Dispatch Banderazo Button */}
+                {(selectedTruckStatus === 'bodega' || selectedTruckStatus === 'esperando_salida') && driverName && truckPlates && routeId && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleBanderazoSalida}
+                    style={{
+                      background: 'linear-gradient(135deg, #10B981, #059669)',
+                      color: 'white',
+                      fontWeight: 700,
+                      fontSize: '0.9rem',
+                      padding: '0.65rem 1.25rem',
+                      marginTop: '1.25rem',
+                      width: '100%',
+                      borderRadius: '8px',
+                      border: 'none',
+                      boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    🚀 Dar Banderazo de Salida (Poner en Tránsito)
+                  </button>
+                )}
               </div>
             </IonCol>
           </IonRow>
