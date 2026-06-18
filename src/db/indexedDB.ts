@@ -31,6 +31,7 @@ export interface Product {
   mysqlId?: number | null;
   updatedAt: string;
   syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
+  truckStock?: number | null;
 }
 
 export interface Payment {

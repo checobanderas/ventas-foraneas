@@ -15,7 +15,7 @@ import {
 } from '@ionic/react';
 import type { Client, Product, Payment } from '../db/indexedDB';
 import { syncService } from '../db/syncService';
-import { getLocalProducts, getLocalPayments } from '../db/indexedDB';
+import { getLocalProducts, getLocalPayments, saveLocalProduct } from '../db/indexedDB';
 
 interface ClientModuleProps {
   onClientsUpdated: () => void;
@@ -60,6 +60,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
   const [localPayments, setLocalPayments] = useState<Payment[]>([]);
   const [productSearchText, setProductSearchText] = useState('');
+  const [selectedCartCategory, setSelectedCartCategory] = useState<string>('');
 
   const loadPayments = async () => {
     try {
@@ -286,13 +287,31 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
     ? (activeCartClient.initialBalance || 0) + clientPaymentsSum 
     : 0;
 
+  // Extract unique brands/departments currently in the truck
+  const cartCategories = Array.from(
+    new Set(
+      localProducts
+        .filter(p => p.truckStock && p.truckStock > 0)
+        .map(p => p.brand)
+        .filter(Boolean)
+    )
+  ).sort() as string[];
+
   const filteredCartProducts = localProducts.filter(prod => {
+    // 1. Only show products loaded on the truck
+    if (!prod.truckStock || prod.truckStock <= 0) return false;
+
+    // 2. Filter by search term
     const term = productSearchText.toLowerCase();
-    return (
+    const matchesSearch = 
       prod.name.toLowerCase().includes(term) ||
       prod.brand.toLowerCase().includes(term) ||
-      prod.sku.toLowerCase().includes(term)
-    );
+      prod.sku.toLowerCase().includes(term);
+
+    // 3. Filter by category tab
+    const matchesCategory = !selectedCartCategory || prod.brand === selectedCartCategory;
+
+    return matchesSearch && matchesCategory;
   });
 
   const getCartTotal = () => {
@@ -344,11 +363,25 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         notes: `Venta: ${itemsSold.join(', ')}`
       });
 
+      // Deduct quantity sold from truck local inventory
+      for (const [prodId, qty] of Object.entries(cartQuantities)) {
+        const prod = localProducts.find(p => p.id === prodId);
+        if (prod) {
+          const currentStock = prod.truckStock || 0;
+          const nextStock = Math.max(0, currentStock - qty);
+          await saveLocalProduct({
+            ...prod,
+            truckStock: nextStock
+          });
+        }
+      }
+
       alert(`¡Venta registrada con éxito!\nTotal: $${total.toFixed(2)}`);
       
       setCartQuantities({});
       setPaymentMethod('cash');
       setProductSearchText('');
+      setSelectedCartCategory('');
       setActiveCartClient(null);
       
       await loadPayments();
@@ -430,6 +463,49 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                 )}
               </div>
 
+              {/* Category Filter Badges */}
+              {cartCategories.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.4rem', overflowX: 'auto', paddingBottom: '0.55rem', marginBottom: '0.85rem', WebkitOverflowScrolling: 'touch' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCartCategory('')}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      fontSize: '0.75rem',
+                      borderRadius: '16px',
+                      border: '1px solid var(--card-border)',
+                      background: selectedCartCategory === '' ? 'var(--primary-color)' : 'rgba(255, 255, 255, 0.7)',
+                      color: selectedCartCategory === '' ? 'white' : 'var(--text-main)',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⭐ Todos
+                  </button>
+                  {cartCategories.map(cat => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCartCategory(cat)}
+                      style={{
+                        padding: '0.35rem 0.75rem',
+                        fontSize: '0.75rem',
+                        borderRadius: '16px',
+                        border: '1px solid var(--card-border)',
+                        background: selectedCartCategory === cat ? 'var(--primary-color)' : 'rgba(255, 255, 255, 0.7)',
+                        color: selectedCartCategory === cat ? 'white' : 'var(--text-main)',
+                        whiteSpace: 'nowrap',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🍳 {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Product Catalog Table */}
               <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 340px)', overflowY: 'auto' }}>
                 <table className="client-table">
@@ -441,58 +517,73 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCartProducts.map((prod) => {
-                      const qty = cartQuantities[prod.id] || 0;
-                      return (
-                        <tr key={prod.id}>
-                          <td>
-                            <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-main)' }}>
-                              {prod.name}
-                            </div>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                              {prod.brand ? `${prod.brand} • ` : ''}{prod.unit}
-                            </div>
-                            {prod.stock !== undefined && (
-                              <div style={{ fontSize: '0.65rem', color: prod.stock > 0 ? 'var(--text-secondary)' : 'var(--danger-color)' }}>
-                                Stock: {prod.stock}
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.85rem' }}>
-                            ${prod.price.toFixed(2)}
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
-                              <button
-                                type="button"
-                                className="emoji-action-btn"
-                                onClick={() => updateQuantity(prod.id, -1)}
-                                style={{ width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', padding: 0 }}
-                              >
-                                ➖
-                              </button>
-                              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '18px', textAlign: 'center' }}>
-                                {qty}
-                              </span>
-                              <button
-                                type="button"
-                                className="emoji-action-btn"
-                                onClick={() => updateQuantity(prod.id, 1)}
-                                style={{ width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', padding: 0 }}
-                              >
-                                ➕
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {filteredCartProducts.length === 0 && (
+                    {localProducts.filter(p => p.truckStock && p.truckStock > 0).length === 0 ? (
                       <tr>
-                        <td colSpan={3} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                          No se encontraron productos.
+                        <td colSpan={3} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--danger-color)', fontSize: '0.85rem' }}>
+                          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🚚</div>
+                          <strong>Tu camioneta está vacía.</strong>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontSize: '0.75rem' }}>
+                            Por favor ve al menú lateral y entra a <strong>Mi Camioneta</strong> para cargar inventario antes de realizar ventas.
+                          </p>
                         </td>
                       </tr>
+                    ) : filteredCartProducts.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                          No se encontraron productos en esta categoría o con este término.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCartProducts.map((prod) => {
+                        const qty = cartQuantities[prod.id] || 0;
+                        return (
+                          <tr key={prod.id}>
+                            <td>
+                              <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-main)' }}>
+                                {prod.name}
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                {prod.brand ? `${prod.brand} • ` : ''}{prod.unit}
+                              </div>
+                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                                En Camioneta: {prod.truckStock}
+                              </div>
+                            </td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.85rem' }}>
+                              ${prod.price.toFixed(2)}
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+                                <button
+                                  type="button"
+                                  className="emoji-action-btn"
+                                  onClick={() => updateQuantity(prod.id, -1)}
+                                  style={{ width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', padding: 0 }}
+                                >
+                                  ➖
+                                </button>
+                                <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '18px', textAlign: 'center' }}>
+                                  {qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="emoji-action-btn"
+                                  onClick={() => {
+                                    if (qty >= (prod.truckStock || 0)) {
+                                      alert("No puedes vender más de lo que traes en la camioneta.");
+                                      return;
+                                    }
+                                    updateQuantity(prod.id, 1);
+                                  }}
+                                  style={{ width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', padding: 0 }}
+                                >
+                                  ➕
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -705,6 +796,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                       const hasPhone = !!client.phone;
                       const hasRoute = (client.latitude !== null && client.longitude !== null) || (!!client.address && client.address !== 'Sin Dirección Registrada');
 
+                      const clientPayments = localPayments.filter(p => p.clientId === client.id);
+                      const paymentsSum = clientPayments.reduce((sum, p) => sum + p.amount, 0);
+                      const totalBalance = (client.initialBalance || 0) + paymentsSum;
+
                       return (
                         <tr
                           key={client.id}
@@ -741,13 +836,16 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                               {client.email && <span style={{ wordBreak: 'break-all' }}>✉️ {client.email}</span>}
                             </div>
 
-                            {/* Local / Cloud Sync Badge */}
-                            <div style={{ marginTop: '0.25rem' }}>
+                            {/* Local / Cloud Sync Badge & Balance */}
+                            <div style={{ marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
                               {client.syncStatus === 'synced' ? (
                                 <span className="sync-indicator-badge synced" style={{ fontSize: '0.6rem', padding: '0.1rem 0.3rem' }}>Nube</span>
                               ) : (
                                 <span className="sync-indicator-badge pending" style={{ fontSize: '0.6rem', padding: '0.1rem 0.3rem' }}>Local</span>
                               )}
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: totalBalance > 0 ? 'var(--danger-color)' : 'var(--accent-color)' }}>
+                                💰 Saldo: ${totalBalance.toFixed(2)}
+                              </span>
                             </div>
                           </td>
                           
@@ -829,6 +927,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                   const hasPhone = !!client.phone;
                   const hasRoute = (client.latitude !== null && client.longitude !== null) || (!!client.address && client.address !== 'Sin Dirección Registrada');
 
+                  const clientPayments = localPayments.filter(p => p.clientId === client.id);
+                  const paymentsSum = clientPayments.reduce((sum, p) => sum + p.amount, 0);
+                  const totalBalance = (client.initialBalance || 0) + paymentsSum;
+
                   return (
                     <div
                       key={client.id}
@@ -868,6 +970,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                             {client.email && <span>✉️ {client.email}</span>}
                           </div>
                         )}
+
+                        <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: 'var(--text-main)', borderTop: '1px solid var(--card-border)', paddingTop: '0.35rem' }}>
+                          <span style={{ fontWeight: 600 }}>💰 Saldo Inicial:</span> ${(client.initialBalance || 0).toFixed(2)} | <span style={{ fontWeight: 600 }}>Deuda Total:</span> <span style={{ fontWeight: 700, color: totalBalance > 0 ? 'var(--danger-color)' : 'var(--accent-color)' }}>${totalBalance.toFixed(2)}</span>
+                        </div>
                       </div>
 
                       <div className="client-card-actions" onClick={(e) => e.stopPropagation()}>

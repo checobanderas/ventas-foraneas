@@ -545,6 +545,9 @@ class SyncService {
           if (local && (local.syncStatus === 'pending-update' || local.syncStatus === 'pending-delete')) {
             continue;
           }
+          if (local && local.truckStock !== undefined) {
+            product.truckStock = local.truckStock;
+          }
           await ldb.put('products', product);
         }
       } catch (pErr) {

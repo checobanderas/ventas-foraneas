@@ -19,12 +19,13 @@ import type { Client, Product } from './db/indexedDB';
 import { syncService } from './db/syncService';
 import ClientModule from './components/ClientModule';
 import ProductModule from './components/ProductModule';
+import TruckModule from './components/TruckModule';
 
 export const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [currentView, setCurrentView] = useState<'clients' | 'products'>('clients');
+  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck'>('clients');
   
   // Connection and Sync states
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -165,6 +166,24 @@ export const App: React.FC = () => {
                   <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>📦</span>
                   <IonLabel>Catálogo de Productos</IonLabel>
                 </IonItem>
+
+                <IonItem 
+                  button 
+                  onClick={() => setCurrentView('truck')} 
+                  style={{
+                    '--background': currentView === 'truck' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                    '--color': currentView === 'truck' ? 'var(--primary-color)' : 'var(--text-main)',
+                    '--border-radius': '8px',
+                    '--margin-bottom': '0.5rem',
+                    'fontWeight': 700,
+                    'fontSize': '0.9rem',
+                    'cursor': 'pointer'
+                  }}
+                  lines="none"
+                >
+                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚚</span>
+                  <IonLabel>Mi Camioneta</IonLabel>
+                </IonItem>
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -182,7 +201,7 @@ export const App: React.FC = () => {
 
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span className="brand-name" style={{ fontSize: '1.05rem', fontWeight: 800 }}>
-                    {currentView === 'clients' ? '👥 Clientes' : '📦 Productos'}
+                    {currentView === 'clients' ? '👥 Clientes' : currentView === 'products' ? '📦 Productos' : '🚚 Mi Camioneta'}
                   </span>
                 </div>
               </div>
@@ -215,9 +234,14 @@ export const App: React.FC = () => {
                   selectedClient={selectedClient}
                   onSelectClient={setSelectedClient}
                 />
-              ) : (
+              ) : currentView === 'products' ? (
                 <ProductModule 
                   onProductsUpdated={loadLocalData}
+                  products={products}
+                />
+              ) : (
+                <TruckModule 
+                  onInventoryUpdated={loadLocalData}
                   products={products}
                 />
               )}
