@@ -13,7 +13,7 @@ import {
   IonButton,
   IonContent
 } from '@ionic/react';
-import type { Client, Product, Payment } from '../db/indexedDB';
+import type { Client, Product, Payment, Truck } from '../db/indexedDB';
 import { syncService } from '../db/syncService';
 import { getLocalProducts, getLocalPayments, saveLocalProduct } from '../db/indexedDB';
 
@@ -22,13 +22,15 @@ interface ClientModuleProps {
   clients: Client[];
   selectedClient: Client | null;
   onSelectClient: (client: Client | null) => void;
+  trucks?: Truck[];
 }
 
 export const ClientModule: React.FC<ClientModuleProps> = ({
   onClientsUpdated,
   clients,
   selectedClient,
-  onSelectClient
+  onSelectClient,
+  trucks = []
 }) => {
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -62,6 +64,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const [productSearchText, setProductSearchText] = useState('');
   const [selectedCartCategory, setSelectedCartCategory] = useState<string>('');
   const [cartDiscount, setCartDiscount] = useState<number>(0);
+  const [saleMode, setSaleMode] = useState<'truck' | 'warehouse'>('truck');
 
   const loadPayments = async () => {
     try {
@@ -288,25 +291,29 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
     ? (activeCartClient.initialBalance || 0) + clientPaymentsSum 
     : 0;
 
-  // Extract unique brands/departments currently in the truck
+  // Extract unique brands/departments currently in the truck or warehouse
   const cartCategories = Array.from(
     new Set(
       localProducts
-        .filter(p => p.truckStock && p.truckStock > 0)
+        .filter(p => saleMode === 'warehouse' ? (p.stock && p.stock > 0) : (p.truckStock && p.truckStock > 0))
         .map(p => p.brand)
         .filter(Boolean)
     )
   ).sort() as string[];
 
   const filteredCartProducts = localProducts.filter(prod => {
-    // 1. Only show products loaded on the truck
-    if (!prod.truckStock || prod.truckStock <= 0) return false;
+    // 1. Only show products loaded on the truck or in warehouse
+    if (saleMode === 'warehouse') {
+      if (!prod.stock || prod.stock <= 0) return false;
+    } else {
+      if (!prod.truckStock || prod.truckStock <= 0) return false;
+    }
 
     // 2. Filter by search term
     const term = productSearchText.toLowerCase();
     const matchesSearch = 
       prod.name.toLowerCase().includes(term) ||
-      prod.brand.toLowerCase().includes(term) ||
+      (prod.brand && prod.brand.toLowerCase().includes(term)) ||
       prod.sku.toLowerCase().includes(term);
 
     // 3. Filter by category tab
@@ -325,13 +332,13 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const updateQuantity = (productId: string, delta: number) => {
     const prod = localProducts.find(p => p.id === productId);
     if (!prod) return;
-    const maxStock = prod.truckStock || 0;
+    const maxStock = saleMode === 'warehouse' ? (prod.stock || 0) : (prod.truckStock || 0);
 
     setCartQuantities(prev => {
       const current = prev[productId] || 0;
       const next = current + delta;
       if (next > maxStock) {
-        alert(`No puedes vender más de la existencia en la camioneta (${maxStock} ${prod.unit}).`);
+        alert(`No puedes vender más de la existencia en ${saleMode === 'warehouse' ? 'bodega' : 'la camioneta'} (${maxStock} ${prod.unit}).`);
         return prev;
       }
       if (next <= 0) {
@@ -364,11 +371,12 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
 
     const finalTotal = Math.max(0, subtotal - discountAmount);
 
-    // Double check truck stock validation before finalizing
+    // Double check stock validation before finalizing
     for (const [prodId, qty] of Object.entries(cartQuantities)) {
       const prod = localProducts.find(p => p.id === prodId);
-      if (!prod || (prod.truckStock || 0) < qty) {
-        alert(`Existencias insuficientes para ${prod?.name || prodId} en la camioneta.`);
+      const maxStock = saleMode === 'warehouse' ? (prod?.stock || 0) : (prod?.truckStock || 0);
+      if (!prod || maxStock < qty) {
+        alert(`Existencias insuficientes para ${prod?.name || prodId} en ${saleMode === 'warehouse' ? 'bodega' : 'la camioneta'}.`);
         return;
       }
     }
@@ -390,20 +398,50 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         date: new Date().toISOString().split('T')[0],
         paymentMethod: paymentMethod,
         status: 'completed',
-        notes: `Venta: ${itemsSold.join(', ')}`,
+        notes: `${saleMode === 'warehouse' ? '[Venta Bodega] ' : ''}Venta: ${itemsSold.join(', ')}`,
         subtotal: subtotal,
         discount: discountAmount
       });
 
-      // Deduct quantity sold from truck local inventory
+      // Deduct quantity sold from truck local inventory or master warehouse stock
       for (const [prodId, qty] of Object.entries(cartQuantities)) {
         const prod = localProducts.find(p => p.id === prodId);
         if (prod) {
-          const currentStock = prod.truckStock || 0;
-          const nextStock = Math.max(0, currentStock - qty);
-          await saveLocalProduct({
-            ...prod,
-            truckStock: nextStock
+          if (saleMode === 'warehouse') {
+            const currentStock = prod.stock || 0;
+            const nextStock = Math.max(0, currentStock - qty);
+            await syncService.updateProduct({
+              ...prod,
+              stock: nextStock
+            });
+          } else {
+            const currentStock = prod.truckStock || 0;
+            const nextStock = Math.max(0, currentStock - qty);
+            await saveLocalProduct({
+              ...prod,
+              truckStock: nextStock
+            });
+          }
+        }
+      }
+
+      // Sync active truck inventory and sales if in truck mode
+      if (saleMode === 'truck') {
+        const activeTruckPlates = localStorage.getItem('active_truck_plates') || '';
+        const activeTruck = (trucks || []).find(t => `${t.name} (Eco: ${t.ecoNumber})` === activeTruckPlates);
+        if (activeTruck) {
+          const updatedInventory = { ...(activeTruck.inventory || {}) };
+          for (const [prodId, qty] of Object.entries(cartQuantities)) {
+            if (updatedInventory[prodId] !== undefined) {
+              updatedInventory[prodId] = Math.max(0, updatedInventory[prodId] - qty);
+            }
+          }
+          const currentSalesToday = activeTruck.salesToday || 0;
+          const nextSalesToday = currentSalesToday + finalTotal;
+          await syncService.updateTruck({
+            ...activeTruck,
+            salesToday: nextSalesToday,
+            inventory: updatedInventory
           });
         }
       }
@@ -451,6 +489,34 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                 </div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--secondary-color)', fontWeight: 600 }}>
                   💵 Nos debe: ${activeClientDebt.toFixed(2)}
+                </div>
+                
+                {/* Sale Mode Selector */}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className={`btn ${saleMode === 'truck' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => {
+                      setSaleMode('truck');
+                      setCartQuantities({});
+                      setCartDiscount(0);
+                    }}
+                    style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', height: '32px' }}
+                  >
+                    🚚 Venta en Camioneta
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${saleMode === 'warehouse' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => {
+                      setSaleMode('warehouse');
+                      setCartQuantities({});
+                      setCartDiscount(0);
+                    }}
+                    style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', height: '32px' }}
+                  >
+                    🏭 Venta en Bodega
+                  </button>
                 </div>
               </div>
 
@@ -550,13 +616,23 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {localProducts.filter(p => p.truckStock && p.truckStock > 0).length === 0 ? (
+                    {saleMode === 'truck' && localProducts.filter(p => p.truckStock && p.truckStock > 0).length === 0 ? (
                       <tr>
                         <td colSpan={3} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--danger-color)', fontSize: '0.85rem' }}>
                           <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🚚</div>
                           <strong>Tu camioneta está vacía.</strong>
                           <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontSize: '0.75rem' }}>
                             Por favor ve al menú lateral y entra a <strong>Mi Camioneta</strong> para cargar inventario antes de realizar ventas.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : saleMode === 'warehouse' && localProducts.filter(p => p.stock && p.stock > 0).length === 0 ? (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--danger-color)', fontSize: '0.85rem' }}>
+                          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🏭</div>
+                          <strong>No hay productos en bodega.</strong>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontSize: '0.75rem' }}>
+                            Por favor agrega productos con existencias en el Catálogo de Productos.
                           </p>
                         </td>
                       </tr>
@@ -569,6 +645,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                     ) : (
                       filteredCartProducts.map((prod) => {
                         const qty = cartQuantities[prod.id] || 0;
+                        const maxStock = saleMode === 'warehouse' ? (prod.stock || 0) : (prod.truckStock || 0);
                         return (
                           <tr key={prod.id}>
                             <td>
@@ -579,7 +656,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                                 {prod.brand ? `${prod.brand} • ` : ''}{prod.unit}
                               </div>
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
-                                En Camioneta: {prod.truckStock}
+                                {saleMode === 'warehouse' ? `Stock Bodega: ${prod.stock}` : `En Camioneta: ${prod.truckStock}`}
                               </div>
                             </td>
                             <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.85rem' }}>
@@ -602,8 +679,8 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                                   type="button"
                                   className="emoji-action-btn"
                                   onClick={() => {
-                                    if (qty >= (prod.truckStock || 0)) {
-                                      alert("No puedes vender más de lo que traes en la camioneta.");
+                                    if (qty >= maxStock) {
+                                      alert(`No puedes vender más de lo que hay en ${saleMode === 'warehouse' ? 'bodega' : 'la camioneta'}.`);
                                       return;
                                     }
                                     updateQuantity(prod.id, 1);

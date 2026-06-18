@@ -21,6 +21,7 @@ import ClientModule from './components/ClientModule';
 import ProductModule from './components/ProductModule';
 import TruckModule from './components/TruckModule';
 import { UserModule } from './components/UserModule';
+import { LogisticsModule } from './components/LogisticsModule';
 
 export const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -28,7 +29,7 @@ export const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users'>('clients');
+  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users' | 'logistics'>('clients');
   
   // Connection and Sync states
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -209,6 +210,24 @@ export const App: React.FC = () => {
                   <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>👤</span>
                   <IonLabel>Catálogo de Usuarios</IonLabel>
                 </IonItem>
+
+                <IonItem 
+                  button 
+                  onClick={() => setCurrentView('logistics')} 
+                  style={{
+                    '--background': currentView === 'logistics' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                    '--color': currentView === 'logistics' ? 'var(--primary-color)' : 'var(--text-main)',
+                    '--border-radius': '8px',
+                    '--margin-bottom': '0.5rem',
+                    'fontWeight': 700,
+                    'fontSize': '0.9rem',
+                    'cursor': 'pointer'
+                  }}
+                  lines="none"
+                >
+                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚚</span>
+                  <IonLabel>Logística de Flota</IonLabel>
+                </IonItem>
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -226,7 +245,7 @@ export const App: React.FC = () => {
 
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span className="brand-name" style={{ fontSize: '1.05rem', fontWeight: 800 }}>
-                    {currentView === 'clients' ? '👥 Clientes' : currentView === 'products' ? '📦 Productos' : currentView === 'users' ? '👤 Usuarios' : '🚚 Mi Camioneta'}
+                    {currentView === 'clients' ? '👥 Clientes' : currentView === 'products' ? '📦 Productos' : currentView === 'users' ? '👤 Usuarios' : currentView === 'logistics' ? '🚚 Logística de Flota' : '🚚 Mi Camioneta'}
                   </span>
                 </div>
               </div>
@@ -252,30 +271,37 @@ export const App: React.FC = () => {
 
           <IonContent style={{ '--background': 'var(--bg-color)' }}>
             <main className="main-container" style={{ padding: '1rem', minHeight: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-               {currentView === 'clients' ? (
-                <ClientModule 
-                  onClientsUpdated={loadLocalData}
-                  clients={clients}
-                  selectedClient={selectedClient}
-                  onSelectClient={setSelectedClient}
-                />
-              ) : currentView === 'products' ? (
-                <ProductModule 
-                  onProductsUpdated={loadLocalData}
-                  products={products}
-                />
-              ) : currentView === 'users' ? (
-                <UserModule 
-                  users={users}
-                />
-              ) : (
-                <TruckModule 
-                  onInventoryUpdated={loadLocalData}
-                  products={products}
-                  users={users}
-                  trucks={trucks}
-                />
-              )}
+                {currentView === 'clients' ? (
+                 <ClientModule 
+                   onClientsUpdated={loadLocalData}
+                   clients={clients}
+                   selectedClient={selectedClient}
+                   onSelectClient={setSelectedClient}
+                   trucks={trucks}
+                 />
+               ) : currentView === 'products' ? (
+                 <ProductModule 
+                   onProductsUpdated={loadLocalData}
+                   products={products}
+                 />
+               ) : currentView === 'users' ? (
+                 <UserModule 
+                   users={users}
+                 />
+               ) : currentView === 'logistics' ? (
+                 <LogisticsModule 
+                   trucks={trucks}
+                   products={products}
+                   onTrucksUpdated={loadLocalData}
+                 />
+               ) : (
+                 <TruckModule 
+                   onInventoryUpdated={loadLocalData}
+                   products={products}
+                   users={users}
+                   trucks={trucks}
+                 />
+               )}
 
               {/* Sync Panel & Logs */}
               <footer className="glass-card" style={{ marginTop: 'auto', padding: '0.85rem' }}>

@@ -444,6 +444,48 @@ class SyncService {
   }
 
   /**
+   * Update truck locally and schedule syncing.
+   */
+  public async updateTruck(truck: Truck): Promise<void> {
+    const updatedTruck: Truck = {
+      ...truck,
+      updatedAt: new Date().toISOString(),
+      syncStatus: navigator.onLine ? 'synced' : 'pending-update'
+    };
+
+    const ldb = await initDB();
+    await ldb.put('trucks', updatedTruck);
+
+    const { syncStatus, ...firebasePayload } = updatedTruck;
+    if (navigator.onLine) {
+      try {
+        const docRef = doc(db, 'trucks', truck.id);
+        await setDoc(docRef, firebasePayload, { merge: true });
+      } catch (err) {
+        console.warn("Could not save truck to Firebase, queueing:", err);
+        updatedTruck.syncStatus = 'pending-update';
+        await ldb.put('trucks', updatedTruck);
+        await addToSyncQueue({
+          collection: 'trucks',
+          action: 'update',
+          documentId: truck.id,
+          payload: firebasePayload,
+          timestamp: Date.now()
+        });
+      }
+    } else {
+      await addToSyncQueue({
+        collection: 'trucks',
+        action: 'update',
+        documentId: truck.id,
+        payload: firebasePayload,
+        timestamp: Date.now()
+      });
+    }
+    this.notify();
+  }
+
+  /**
    * Replay offline queue to Firestore, then pull down updates.
    */
   public async sync(): Promise<void> {
@@ -649,7 +691,12 @@ class SyncService {
             ecoNumber: remoteData.ecoNumber,
             mysqlId: remoteData.mysqlId !== undefined ? remoteData.mysqlId : null,
             updatedAt: remoteData.updatedAt || new Date().toISOString(),
-            syncStatus: 'synced'
+            syncStatus: 'synced',
+            status: remoteData.status || 'bodega',
+            activeDriver: remoteData.activeDriver || null,
+            activeRoute: remoteData.activeRoute || null,
+            inventory: remoteData.inventory || null,
+            salesToday: remoteData.salesToday !== undefined ? Number(remoteData.salesToday) : 0
           };
 
           const local = activeLocalTrucks.find(t => t.id === truck.id);

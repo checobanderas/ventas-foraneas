@@ -70,13 +70,51 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     new Set(products.map(p => p.brand).filter(Boolean))
   ).sort() as string[];
 
+  const updateActiveTruckInventory = async (updatedProducts: Product[]) => {
+    if (!truckPlates) return;
+    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+    if (matchedTruck) {
+      const inventory: { [productId: string]: number } = {};
+      updatedProducts.forEach(p => {
+        if (p.truckStock && p.truckStock > 0) {
+          inventory[p.id] = p.truckStock;
+        }
+      });
+      await syncService.updateTruck({
+        ...matchedTruck,
+        inventory
+      });
+    }
+  };
+
   // Save config changes to localStorage
-  const handleSaveConfig = (e: React.FormEvent) => {
+  const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('active_route_id', routeId);
     localStorage.setItem('active_truck_plates', truckPlates);
     localStorage.setItem('active_driver_name', driverName);
+    
+    // Sync status and details of active truck
+    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+    if (matchedTruck) {
+      const inventory: { [productId: string]: number } = {};
+      products.forEach(p => {
+        if (p.truckStock && p.truckStock > 0) {
+          inventory[p.id] = p.truckStock;
+        }
+      });
+      await syncService.updateTruck({
+        ...matchedTruck,
+        status: 'transito',
+        activeDriver: driverName || null,
+        activeRoute: routeId || null,
+        inventory,
+        salesToday: matchedTruck.salesToday !== undefined ? matchedTruck.salesToday : 0
+      });
+    }
+    
     alert('Configuración de la camioneta guardada con éxito.');
+    onInventoryUpdated();
   };
 
   // Adjust Truck Stock & Loaded stock
@@ -95,6 +133,11 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     };
     
     await saveLocalProduct(updated);
+    
+    // Update synced truck
+    const updatedProducts = products.map(p => p.id === prod.id ? updated : p);
+    await updateActiveTruckInventory(updatedProducts);
+
     onInventoryUpdated();
   };
 
@@ -114,21 +157,32 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     };
     
     await saveLocalProduct(updated);
+    
+    // Update synced truck
+    const updatedProducts = products.map(p => p.id === prod.id ? updated : p);
+    await updateActiveTruckInventory(updatedProducts);
+
     onInventoryUpdated();
   };
 
   // Quick reset all truck stock to 0
   const handleClearTruckStock = async () => {
     if (confirm('¿Estás seguro de vaciar todo el inventario de la camioneta?')) {
+      const updatedProducts: Product[] = [];
       for (const prod of products) {
         if ((prod.truckStock && prod.truckStock > 0) || (prod.truckStockLoaded && prod.truckStockLoaded > 0)) {
-          await saveLocalProduct({
+          const updated = {
             ...prod,
             truckStock: 0,
             truckStockLoaded: 0
-          });
+          };
+          await saveLocalProduct(updated);
+          updatedProducts.push(updated);
+        } else {
+          updatedProducts.push(prod);
         }
       }
+      await updateActiveTruckInventory(updatedProducts);
       onInventoryUpdated();
       alert('Inventario de la camioneta vaciado.');
     }
@@ -213,6 +267,19 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
             truckStockLoaded: 0
           });
         }
+      }
+
+      // Sync active truck status reset
+      const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+      if (matchedTruck) {
+        await syncService.updateTruck({
+          ...matchedTruck,
+          status: 'bodega',
+          activeDriver: null,
+          activeRoute: null,
+          salesToday: 0,
+          inventory: null
+        });
       }
 
       // Clear local config

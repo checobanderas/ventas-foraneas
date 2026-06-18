@@ -54,6 +54,11 @@ export interface Truck {
   mysqlId?: number | null;
   updatedAt: string;
   syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
+  status?: 'bodega' | 'transito' | 'taller';
+  activeDriver?: string | null;
+  activeRoute?: string | null;
+  inventory?: { [productId: string]: number } | null;
+  salesToday?: number | null;
 }
 
 export interface Payment {
