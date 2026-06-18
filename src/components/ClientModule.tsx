@@ -61,6 +61,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const [localPayments, setLocalPayments] = useState<Payment[]>([]);
   const [productSearchText, setProductSearchText] = useState('');
   const [selectedCartCategory, setSelectedCartCategory] = useState<string>('');
+  const [cartDiscount, setCartDiscount] = useState<number>(0);
 
   const loadPayments = async () => {
     try {
@@ -322,9 +323,17 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   };
 
   const updateQuantity = (productId: string, delta: number) => {
+    const prod = localProducts.find(p => p.id === productId);
+    if (!prod) return;
+    const maxStock = prod.truckStock || 0;
+
     setCartQuantities(prev => {
       const current = prev[productId] || 0;
       const next = current + delta;
+      if (next > maxStock) {
+        alert(`No puedes vender más de la existencia en la camioneta (${maxStock} ${prod.unit}).`);
+        return prev;
+      }
       if (next <= 0) {
         const copy = { ...prev };
         delete copy[productId];
@@ -337,10 +346,31 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const handleConfirmSale = async () => {
     if (!activeCartClient) return;
 
-    const total = getCartTotal();
-    if (total <= 0) {
+    const subtotal = getCartTotal();
+    if (subtotal <= 0) {
       alert("El carrito está vacío. Agrega al menos un producto.");
       return;
+    }
+
+    const discountAmount = Number(cartDiscount) || 0;
+    if (discountAmount < 0) {
+      alert("El descuento no puede ser negativo.");
+      return;
+    }
+    if (discountAmount > subtotal) {
+      alert("El descuento no puede ser mayor que el subtotal.");
+      return;
+    }
+
+    const finalTotal = Math.max(0, subtotal - discountAmount);
+
+    // Double check truck stock validation before finalizing
+    for (const [prodId, qty] of Object.entries(cartQuantities)) {
+      const prod = localProducts.find(p => p.id === prodId);
+      if (!prod || (prod.truckStock || 0) < qty) {
+        alert(`Existencias insuficientes para ${prod?.name || prodId} en la camioneta.`);
+        return;
+      }
     }
 
     const itemsSold = Object.entries(cartQuantities)
@@ -356,11 +386,13 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         id: paymentId,
         clientId: activeCartClient.id,
         clientName: activeCartClient.name,
-        amount: total,
+        amount: finalTotal,
         date: new Date().toISOString().split('T')[0],
         paymentMethod: paymentMethod,
         status: 'completed',
-        notes: `Venta: ${itemsSold.join(', ')}`
+        notes: `Venta: ${itemsSold.join(', ')}`,
+        subtotal: subtotal,
+        discount: discountAmount
       });
 
       // Deduct quantity sold from truck local inventory
@@ -376,13 +408,14 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         }
       }
 
-      alert(`¡Venta registrada con éxito!\nTotal: $${total.toFixed(2)}`);
+      alert(`¡Venta registrada con éxito!\nTotal: $${finalTotal.toFixed(2)}`);
       
       setCartQuantities({});
       setPaymentMethod('cash');
       setProductSearchText('');
       setSelectedCartCategory('');
       setActiveCartClient(null);
+      setCartDiscount(0);
       
       await loadPayments();
       onClientsUpdated();
@@ -591,11 +624,41 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
 
               {/* Checkout Footer Panel */}
               <div style={{ borderTop: '1px solid var(--card-border)', marginTop: '1rem', paddingTop: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-main)' }}>Total Venta:</span>
-                  <span style={{ fontWeight: 800, fontSize: '1.25rem', color: 'var(--primary-color)' }}>
-                    ${getCartTotal().toFixed(2)}
-                  </span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Subtotal:</span>
+                    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                      ${getCartTotal().toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Descuento ($):</span>
+                    <input
+                      type="number"
+                      className="form-control"
+                      placeholder="0.00"
+                      value={cartDiscount || ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? 0 : Math.max(0, parseFloat(e.target.value));
+                        setCartDiscount(isNaN(val) ? 0 : val);
+                      }}
+                      style={{
+                        width: '90px',
+                        padding: '0.2rem 0.4rem',
+                        fontSize: '0.85rem',
+                        textAlign: 'right',
+                        margin: 0
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem', paddingTop: '0.25rem', borderTop: '1px dashed var(--card-border)' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-main)' }}>Total a Cobrar:</span>
+                    <span style={{ fontWeight: 800, fontSize: '1.25rem', color: 'var(--primary-color)' }}>
+                      ${Math.max(0, getCartTotal() - cartDiscount).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
@@ -884,7 +947,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                                 <button
                                   type="button"
                                   className="emoji-action-btn"
-                                  onClick={() => { setCartQuantities({}); setPaymentMethod('cash'); setProductSearchText(''); setActiveCartClient(client); }}
+                                  onClick={() => { setCartQuantities({}); setPaymentMethod('cash'); setProductSearchText(''); setCartDiscount(0); setActiveCartClient(client); }}
                                   title="Carrito de Ventas"
                                   style={{ padding: '0.15rem' }}
                                 >

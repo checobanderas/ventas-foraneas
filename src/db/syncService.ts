@@ -9,7 +9,7 @@ import {
   saveLocalPayment,
   saveLocalProduct
 } from './indexedDB';
-import type { Client, Payment, Product, User, Truck } from './indexedDB';
+import type { Client, Payment, Product, User, Truck, TruckCut } from './indexedDB';
 
 type SyncCallback = (status: {
   isSyncing: boolean;
@@ -403,6 +403,47 @@ class SyncService {
   }
 
   /**
+   * Add truck cut locally and schedule syncing.
+   */
+  public async addTruckCut(cutData: Omit<TruckCut, 'syncStatus'>): Promise<void> {
+    const cut: TruckCut = {
+      ...cutData,
+      syncStatus: navigator.onLine ? 'synced' : 'pending-create'
+    };
+
+    const ldb = await initDB();
+    await ldb.put('truckCuts', cut);
+
+    const { syncStatus, ...firebasePayload } = cut;
+    if (navigator.onLine) {
+      try {
+        const docRef = doc(db, 'truckCuts', cut.id);
+        await setDoc(docRef, firebasePayload);
+      } catch (err) {
+        console.warn("Could not save truck cut to Firebase, queueing:", err);
+        cut.syncStatus = 'pending-create';
+        await ldb.put('truckCuts', cut);
+        await addToSyncQueue({
+          collection: 'truckCuts',
+          action: 'create',
+          documentId: cut.id,
+          payload: firebasePayload,
+          timestamp: Date.now()
+        });
+      }
+    } else {
+      await addToSyncQueue({
+        collection: 'truckCuts',
+        action: 'create',
+        documentId: cut.id,
+        payload: firebasePayload,
+        timestamp: Date.now()
+      });
+    }
+    this.notify();
+  }
+
+  /**
    * Replay offline queue to Firestore, then pull down updates.
    */
   public async sync(): Promise<void> {
@@ -454,6 +495,13 @@ class SyncService {
             } else if (item.action === 'delete') {
               await deleteDoc(doc(db, 'trucks', item.documentId));
               await ldb.delete('trucks', item.documentId);
+            }
+          } else if (item.collection === 'truckCuts') {
+            if (item.action === 'create') {
+              await setDoc(doc(db, 'truckCuts', item.documentId), item.payload);
+            } else if (item.action === 'delete') {
+              await deleteDoc(doc(db, 'truckCuts', item.documentId));
+              await ldb.delete('truckCuts', item.documentId);
             }
           }
 
@@ -612,6 +660,38 @@ class SyncService {
         }
       } catch (tErr) {
         console.warn("Could not sync trucks from Firestore:", tErr);
+      }
+
+      // 7. Pull down fresh truck cuts from Firestore
+      try {
+        const cutsSnapshot = await getDocs(collection(db, 'truckCuts'));
+        const activeLocalCuts = await ldb.getAll('truckCuts');
+        for (const docSnap of cutsSnapshot.docs) {
+          const remoteData = docSnap.data();
+          const cut: TruckCut = {
+            id: docSnap.id,
+            driverName: remoteData.driverName,
+            truckPlates: remoteData.truckPlates,
+            routeId: remoteData.routeId,
+            date: remoteData.date,
+            totalSales: Number(remoteData.totalSales),
+            totalCash: Number(remoteData.totalCash),
+            totalCard: Number(remoteData.totalCard),
+            totalTransfer: Number(remoteData.totalTransfer),
+            totalDiscounts: Number(remoteData.totalDiscounts),
+            inventoryDiff: remoteData.inventoryDiff,
+            closedAt: remoteData.closedAt,
+            syncStatus: 'synced'
+          };
+
+          const local = activeLocalCuts.find(c => c.id === cut.id);
+          if (local && (local.syncStatus === 'pending-create')) {
+            continue;
+          }
+          await ldb.put('truckCuts', cut);
+        }
+      } catch (cErr) {
+        console.warn("Could not sync truck cuts from Firestore:", cErr);
       }
 
       // 4. Update sync success metadata

@@ -32,6 +32,7 @@ export interface Product {
   updatedAt: string;
   syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
   truckStock?: number | null;
+  truckStockLoaded?: number | null;
 }
 
 export interface User {
@@ -66,11 +67,29 @@ export interface Payment {
   notes: string;
   createdAt: string;
   syncStatus: 'synced' | 'pending-create' | 'pending-delete';
+  discount?: number;
+  subtotal?: number;
+}
+
+export interface TruckCut {
+  id: string;
+  driverName: string;
+  truckPlates: string;
+  routeId: string;
+  date: string;
+  totalSales: number;
+  totalCash: number;
+  totalCard: number;
+  totalTransfer: number;
+  totalDiscounts: number;
+  inventoryDiff: string;
+  closedAt: string;
+  syncStatus: 'synced' | 'pending-create';
 }
 
 export interface SyncItem {
   id?: number;
-  collection: 'clients' | 'payments' | 'products' | 'users' | 'trucks';
+  collection: 'clients' | 'payments' | 'products' | 'users' | 'trucks' | 'truckCuts';
   action: 'create' | 'update' | 'delete';
   documentId: string;
   payload: any;
@@ -98,6 +117,10 @@ interface VentasForaneasDB extends DBSchema {
     key: string;
     value: Truck;
   };
+  truckCuts: {
+    key: string;
+    value: TruckCut;
+  };
   syncQueue: {
     key: number;
     value: SyncItem;
@@ -105,7 +128,7 @@ interface VentasForaneasDB extends DBSchema {
 }
 
 const DB_NAME = 'ventas-foraneas-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export const initDB = async (): Promise<IDBPDatabase<VentasForaneasDB>> => {
   return openDB<VentasForaneasDB>(DB_NAME, DB_VERSION, {
@@ -124,6 +147,9 @@ export const initDB = async (): Promise<IDBPDatabase<VentasForaneasDB>> => {
       }
       if (!db.objectStoreNames.contains('trucks')) {
         db.createObjectStore('trucks', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('truckCuts')) {
+        db.createObjectStore('truckCuts', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('syncQueue')) {
         db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
@@ -280,5 +306,16 @@ export const deleteLocalTruck = async (id: string): Promise<void> => {
       await db.put('trucks', truck);
     }
   }
+};
+
+// --- Helper methods for Truck Cuts ---
+export const getLocalTruckCuts = async (): Promise<TruckCut[]> => {
+  const db = await initDB();
+  return db.getAll('truckCuts');
+};
+
+export const saveLocalTruckCut = async (cut: TruckCut): Promise<void> => {
+  const db = await initDB();
+  await db.put('truckCuts', cut);
 };
 
