@@ -37,7 +37,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   
   // Search & Route Filter
   const [searchText, setSearchText] = useState('');
-  const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
+  const [selectedRoute, setSelectedRoute] = useState<number | null>(() => {
+    const activeRoute = localStorage.getItem('active_route_id');
+    return activeRoute ? Number(activeRoute) : null;
+  });
 
   const filteredClients = clients.filter(client => {
     const matchesSearch = 
@@ -388,6 +391,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
       })
       .filter(Boolean);
 
+    const activeDriver = localStorage.getItem('active_driver_name');
+    const activeTruck = localStorage.getItem('active_truck_plates');
+    const activeRoute = localStorage.getItem('active_route_id');
+
     try {
       const paymentId = `pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       await syncService.addPayment({
@@ -400,7 +407,10 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         status: 'completed',
         notes: `${saleMode === 'warehouse' ? '[Venta Bodega] ' : ''}Venta: ${itemsSold.join(', ')}`,
         subtotal: subtotal,
-        discount: discountAmount
+        discount: discountAmount,
+        driverName: saleMode === 'truck' ? activeDriver : null,
+        truckPlates: saleMode === 'truck' ? activeTruck : null,
+        routeId: saleMode === 'truck' ? activeRoute : null
       });
 
       // Deduct quantity sold from truck local inventory or master warehouse stock
@@ -799,6 +809,45 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
           <IonCol size="12">
           <div className="glass-card" style={{ padding: '1rem' }}>
             
+            {/* Active Operation Banner */}
+            {localStorage.getItem('active_truck_plates') ? (
+              <div style={{
+                padding: '0.65rem 0.85rem',
+                borderRadius: '8px',
+                background: 'rgba(59, 130, 246, 0.1)',
+                border: '1px solid rgba(59, 130, 246, 0.2)',
+                fontSize: '0.8rem',
+                color: 'var(--primary-color)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginBottom: '1rem'
+              }}>
+                <span>🛣️</span>
+                <div style={{ flex: 1 }}>
+                  <strong>Unidad en Tránsito:</strong> {localStorage.getItem('active_driver_name')} en camioneta {localStorage.getItem('active_truck_plates')} | <strong>Ruta {localStorage.getItem('active_route_id')}</strong>
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                padding: '0.65rem 0.85rem',
+                borderRadius: '8px',
+                background: 'rgba(0, 0, 0, 0.04)',
+                border: '1px solid var(--card-border)',
+                fontSize: '0.8rem',
+                color: 'var(--text-secondary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginBottom: '1rem'
+              }}>
+                <span>🏭</span>
+                <div style={{ flex: 1 }}>
+                  <strong>Modo Oficina / Bodega:</strong> Sin camioneta activa asignada en este dispositivo.
+                </div>
+              </div>
+            )}
+
             {/* Header controls with Search & Route Filter */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
               {/* Row 1: Title & Mode Toggle */}

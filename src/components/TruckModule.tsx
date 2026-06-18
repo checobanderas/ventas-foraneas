@@ -70,6 +70,10 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     new Set(products.map(p => p.brand).filter(Boolean))
   ).sort() as string[];
 
+  const selectedTruckObj = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+  const selectedTruckStatus = selectedTruckObj?.status || 'bodega';
+  const isWorkshopLocked = selectedTruckStatus === 'taller';
+
   const updateActiveTruckInventory = async (updatedProducts: Product[]) => {
     if (!truckPlates) return;
     const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
@@ -334,9 +338,29 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
           <IonRow>
             <IonCol size="12">
               <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
-                <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  🚚 Configuración de Camioneta
-                </h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    🚚 Configuración de Camioneta
+                  </h3>
+                  {truckPlates && (
+                    <span style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      color: selectedTruckStatus === 'transito' ? 'var(--accent-color)' : selectedTruckStatus === 'taller' ? 'var(--danger-color)' : 'var(--text-secondary)',
+                      background: selectedTruckStatus === 'transito' ? 'rgba(16, 185, 129, 0.15)' : selectedTruckStatus === 'taller' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(0,0,0,0.05)',
+                      padding: '0.25rem 0.6rem',
+                      borderRadius: '6px'
+                    }}>
+                      {selectedTruckStatus === 'transito' ? '🛣️ En Tránsito' : selectedTruckStatus === 'taller' ? '🔧 En Taller (Bloqueada)' : '🏭 Parada en Bodega'}
+                    </span>
+                  )}
+                </div>
+
+                {isWorkshopLocked && (
+                  <div className="alert danger" style={{ padding: '0.75rem 1rem', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                    ⚠️ Esta unidad está registrada en el taller de mantenimiento. No se puede iniciar ruta ni cargar mercancía.
+                  </div>
+                )}
 
                 <form onSubmit={handleSaveConfig}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
@@ -348,14 +372,15 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         value={driverName}
                         onChange={(e) => setDriverName(e.target.value)}
                         style={{ padding: '0.45rem', fontSize: '0.85rem' }}
+                        disabled={isWorkshopLocked}
                       >
                         <option value="">Seleccionar Chofer</option>
                         {users
                           .filter(u => u.role === 'driver' && u.isActive)
                           .map(u => (
-                            <option key={u.id} value={u.name}>
-                              {u.name}
-                            </option>
+                             <option key={u.id} value={u.name}>
+                               {u.name}
+                             </option>
                           ))}
                       </select>
                     </div>
@@ -367,6 +392,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         value={routeId}
                         onChange={(e) => setRouteId(e.target.value)}
                         style={{ padding: '0.45rem', fontSize: '0.85rem' }}
+                        disabled={isWorkshopLocked}
                       >
                         <option value="">Seleccionar</option>
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(r => (
@@ -396,6 +422,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                       type="submit" 
                       className="btn btn-primary"
                       style={{ width: 'auto', padding: '0.55rem 1rem', fontSize: '0.85rem', height: '38px' }}
+                      disabled={isWorkshopLocked}
                     >
                       Guardar 💾
                     </button>
@@ -418,6 +445,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     type="button"
                     className="btn btn-secondary"
                     onClick={handleClearTruckStock}
+                    disabled={isWorkshopLocked}
                     style={{ width: 'auto', padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--danger-color)' }}
                   >
                     🗑️ Vaciar Camioneta
@@ -510,6 +538,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, -10)}
                                   style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
                                   title="Quitar 10"
+                                  disabled={isWorkshopLocked}
                                 >
                                   -10
                                 </button>
@@ -519,6 +548,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, -1)}
                                   style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
                                   title="Quitar 1"
+                                  disabled={isWorkshopLocked}
                                 >
                                   ➖
                                 </button>
@@ -537,6 +567,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                     background: 'white',
                                     color: 'black'
                                   }}
+                                  disabled={isWorkshopLocked}
                                 />
 
                                 <button
@@ -545,6 +576,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, 1)}
                                   style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
                                   title="Añadir 1"
+                                  disabled={isWorkshopLocked}
                                 >
                                   ➕
                                 </button>
@@ -554,6 +586,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, 10)}
                                   style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
                                   title="Añadir 10"
+                                  disabled={isWorkshopLocked}
                                 >
                                   +10
                                 </button>

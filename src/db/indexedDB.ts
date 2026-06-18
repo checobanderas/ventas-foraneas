@@ -74,6 +74,9 @@ export interface Payment {
   syncStatus: 'synced' | 'pending-create' | 'pending-delete';
   discount?: number;
   subtotal?: number;
+  driverName?: string | null;
+  truckPlates?: string | null;
+  routeId?: string | null;
 }
 
 export interface TruckCut {

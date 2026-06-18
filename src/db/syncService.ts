@@ -608,7 +608,10 @@ class SyncService {
           status: remoteData.status,
           notes: remoteData.notes,
           createdAt: remoteData.createdAt,
-          syncStatus: 'synced'
+          syncStatus: 'synced',
+          driverName: remoteData.driverName || null,
+          truckPlates: remoteData.truckPlates || null,
+          routeId: remoteData.routeId || null
         };
 
         const local = activeLocalPayments.find(p => p.id === payment.id);
