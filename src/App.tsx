@@ -45,6 +45,17 @@ export const App: React.FC = () => {
 
   const [syncLogs, setSyncLogs] = useState<Array<{ time: string; msg: string; type: 'info' | 'success' | 'error' }>>([]);
 
+  // PWA & Notification Onboarding States
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+  });
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return 'granted';
+    return Notification.permission;
+  });
+
   const addLog = (msg: string, type: 'info' | 'success' | 'error' = 'info') => {
     const time = new Date().toLocaleTimeString();
     setSyncLogs(prev => [{ time, msg, type }, ...prev].slice(0, 30));
@@ -88,6 +99,48 @@ export const App: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsStandalone(true);
+      setDeferredPrompt(null);
+      addLog("¡Aplicación instalada con éxito como PWA!", "success");
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsStandalone(true);
+    }
+    setDeferredPrompt(null);
+  };
+
+  const handleRequestNotificationPermission = async () => {
+    if (!('Notification' in window)) return;
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === 'granted') {
+      addLog("Permiso de notificaciones concedido.", "success");
+    } else {
+      addLog("Permiso de notificaciones denegado.", "error");
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = syncService.addListener((status) => {
@@ -271,7 +324,92 @@ export const App: React.FC = () => {
 
           <IonContent style={{ '--background': 'var(--bg-color)' }}>
             <main className="main-container" style={{ padding: '1rem', minHeight: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {currentView === 'clients' ? (
+              
+              {/* PWA Install Onboarding Banner */}
+              {!isStandalone && deferredPrompt && (
+                <div className="glass-card" style={{
+                  padding: '1rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '1rem',
+                  border: '1px solid var(--accent-color)',
+                  background: 'rgba(16, 185, 129, 0.08)',
+                  marginBottom: '0.25rem'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                    <span style={{ fontSize: '1.75rem' }}>📲</span>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-main)', textAlign: 'left' }}>
+                      <strong>Instala Ventas Foráneas en tu dispositivo</strong>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                        Acceso rápido desde tu pantalla de inicio, mejor rendimiento y modo offline optimizado.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleInstallApp}
+                    className="btn btn-primary"
+                    style={{
+                      width: 'auto',
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      background: 'var(--accent-color)',
+                      borderColor: 'var(--accent-color)',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    Instalar Aplicación 📥
+                  </button>
+                </div>
+              )}
+
+              {/* Notification Permission Onboarding Banner */}
+              {notificationPermission !== 'granted' && (
+                <div className="glass-card" style={{
+                  padding: '1rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '1rem',
+                  border: '1px solid var(--primary-color)',
+                  background: 'rgba(59, 130, 246, 0.08)',
+                  marginBottom: '0.25rem'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                    <span style={{ fontSize: '1.75rem' }}>🔔</span>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-main)', textAlign: 'left' }}>
+                      <strong>Activa tus Notificaciones</strong>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                        {notificationPermission === 'denied' 
+                          ? '⚠️ Las notificaciones están bloqueadas. Por favor actívalas en la configuración de tu navegador.' 
+                          : 'Recibe alertas sobre tu inventario, validaciones de ruta y notificaciones importantes de cobranza.'}
+                      </div>
+                    </div>
+                  </div>
+                  {notificationPermission !== 'denied' ? (
+                    <button
+                      onClick={handleRequestNotificationPermission}
+                      className="btn btn-primary"
+                      style={{
+                        width: 'auto',
+                        padding: '0.5rem 1rem',
+                        fontSize: '0.8rem',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Activar Notificaciones 🔔
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--danger-color)', whiteSpace: 'nowrap' }}>
+                      Configura el Navegador ⚙️
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {currentView === 'clients' ? (
                  <ClientModule 
                    onClientsUpdated={loadLocalData}
                    clients={clients}
