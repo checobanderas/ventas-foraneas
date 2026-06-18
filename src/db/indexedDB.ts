@@ -34,6 +34,27 @@ export interface Product {
   truckStock?: number | null;
 }
 
+export interface User {
+  id: string;
+  name: string;
+  username: string;
+  role: 'driver' | 'admin' | 'supervisor';
+  phone: string;
+  mysqlId?: number | null;
+  isActive: boolean;
+  updatedAt: string;
+  syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
+}
+
+export interface Truck {
+  id: string;
+  name: string;
+  ecoNumber: string;
+  mysqlId?: number | null;
+  updatedAt: string;
+  syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
+}
+
 export interface Payment {
   id: string;
   clientId: string;
@@ -49,7 +70,7 @@ export interface Payment {
 
 export interface SyncItem {
   id?: number;
-  collection: 'clients' | 'payments' | 'products';
+  collection: 'clients' | 'payments' | 'products' | 'users' | 'trucks';
   action: 'create' | 'update' | 'delete';
   documentId: string;
   payload: any;
@@ -69,6 +90,14 @@ interface VentasForaneasDB extends DBSchema {
     key: string;
     value: Product;
   };
+  users: {
+    key: string;
+    value: User;
+  };
+  trucks: {
+    key: string;
+    value: Truck;
+  };
   syncQueue: {
     key: number;
     value: SyncItem;
@@ -76,7 +105,7 @@ interface VentasForaneasDB extends DBSchema {
 }
 
 const DB_NAME = 'ventas-foraneas-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export const initDB = async (): Promise<IDBPDatabase<VentasForaneasDB>> => {
   return openDB<VentasForaneasDB>(DB_NAME, DB_VERSION, {
@@ -89,6 +118,12 @@ export const initDB = async (): Promise<IDBPDatabase<VentasForaneasDB>> => {
       }
       if (!db.objectStoreNames.contains('products')) {
         db.createObjectStore('products', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('users')) {
+        db.createObjectStore('users', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('trucks')) {
+        db.createObjectStore('trucks', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('syncQueue')) {
         db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
@@ -192,6 +227,57 @@ export const deleteLocalProduct = async (id: string): Promise<void> => {
     } else {
       product.syncStatus = 'pending-delete';
       await db.put('products', product);
+    }
+  }
+};
+
+
+// --- Helper methods for Users ---
+export const getLocalUsers = async (): Promise<User[]> => {
+  const db = await initDB();
+  const all = await db.getAll('users');
+  return all.filter(u => u.syncStatus !== 'pending-delete');
+};
+
+export const saveLocalUser = async (user: User): Promise<void> => {
+  const db = await initDB();
+  await db.put('users', user);
+};
+
+export const deleteLocalUser = async (id: string): Promise<void> => {
+  const db = await initDB();
+  const user = await db.get('users', id);
+  if (user) {
+    if (user.syncStatus === 'pending-create') {
+      await db.delete('users', id);
+    } else {
+      user.syncStatus = 'pending-delete';
+      await db.put('users', user);
+    }
+  }
+};
+
+// --- Helper methods for Trucks ---
+export const getLocalTrucks = async (): Promise<Truck[]> => {
+  const db = await initDB();
+  const all = await db.getAll('trucks');
+  return all.filter(t => t.syncStatus !== 'pending-delete');
+};
+
+export const saveLocalTruck = async (truck: Truck): Promise<void> => {
+  const db = await initDB();
+  await db.put('trucks', truck);
+};
+
+export const deleteLocalTruck = async (id: string): Promise<void> => {
+  const db = await initDB();
+  const truck = await db.get('trucks', id);
+  if (truck) {
+    if (truck.syncStatus === 'pending-create') {
+      await db.delete('trucks', id);
+    } else {
+      truck.syncStatus = 'pending-delete';
+      await db.put('trucks', truck);
     }
   }
 };

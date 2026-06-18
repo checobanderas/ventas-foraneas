@@ -4,17 +4,21 @@ import {
   IonRow, 
   IonCol
 } from '@ionic/react';
-import type { Product } from '../db/indexedDB';
+import type { Product, User, Truck } from '../db/indexedDB';
 import { saveLocalProduct } from '../db/indexedDB';
 
 interface TruckModuleProps {
   onInventoryUpdated: () => void;
   products: Product[];
+  users?: User[];
+  trucks?: Truck[];
 }
 
 export const TruckModule: React.FC<TruckModuleProps> = ({
   onInventoryUpdated,
-  products
+  products,
+  users = [],
+  trucks = []
 }) => {
   // Configuration States (saved in LocalStorage)
   const [routeId, setRouteId] = useState<string>(localStorage.getItem('active_route_id') || '');
@@ -105,16 +109,23 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
             <form onSubmit={handleSaveConfig}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
                 
-                <div className="form-group" style={{ flex: 1, minWidth: '120px', marginBottom: 0 }}>
+                <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
                   <label className="form-label" style={{ fontSize: '0.8rem' }}>Chofer / Vendedor</label>
-                  <input
-                    type="text"
+                  <select
                     className="form-control"
-                    placeholder="Ej. Carlos Ortiz"
                     value={driverName}
                     onChange={(e) => setDriverName(e.target.value)}
                     style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                  />
+                  >
+                    <option value="">Seleccionar Chofer</option>
+                    {users
+                      .filter(u => u.role === 'driver' && u.isActive)
+                      .map(u => (
+                        <option key={u.id} value={u.name}>
+                          {u.name}
+                        </option>
+                      ))}
+                  </select>
                 </div>
 
                 <div className="form-group" style={{ flex: '0 0 120px', marginBottom: 0 }}>
@@ -132,16 +143,21 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </select>
                 </div>
 
-                <div className="form-group" style={{ flex: '0 0 130px', marginBottom: 0 }}>
+                <div className="form-group" style={{ flex: '0 0 180px', marginBottom: 0 }}>
                   <label className="form-label" style={{ fontSize: '0.8rem' }}>Placas de Unidad</label>
-                  <input
-                    type="text"
+                  <select
                     className="form-control"
-                    placeholder="Ej. RX-892-A"
                     value={truckPlates}
                     onChange={(e) => setTruckPlates(e.target.value)}
                     style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                  />
+                  >
+                    <option value="">Seleccionar Unidad</option>
+                    {trucks.map(t => (
+                      <option key={t.id} value={`${t.name} (Eco: ${t.ecoNumber})`}>
+                        {t.name} (Eco: {t.ecoNumber})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <button 

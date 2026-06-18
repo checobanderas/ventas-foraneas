@@ -14,18 +14,21 @@ import {
   IonButtons
 } from '@ionic/react';
 import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { getLocalClients, getLocalProducts } from './db/indexedDB';
-import type { Client, Product } from './db/indexedDB';
+import { getLocalClients, getLocalProducts, getLocalUsers, getLocalTrucks } from './db/indexedDB';
+import type { Client, Product, User, Truck } from './db/indexedDB';
 import { syncService } from './db/syncService';
 import ClientModule from './components/ClientModule';
 import ProductModule from './components/ProductModule';
 import TruckModule from './components/TruckModule';
+import { UserModule } from './components/UserModule';
 
 export const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [trucks, setTrucks] = useState<Truck[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck'>('clients');
+  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users'>('clients');
   
   // Connection and Sync states
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -52,6 +55,10 @@ export const App: React.FC = () => {
       setClients(localClients);
       const localProducts = await getLocalProducts();
       setProducts(localProducts);
+      const localUsers = await getLocalUsers();
+      setUsers(localUsers);
+      const localTrucks = await getLocalTrucks();
+      setTrucks(localTrucks);
     } catch (err) {
       console.error("Error loading local data:", err);
       addLog("Error cargando base de datos local", "error");
@@ -184,6 +191,24 @@ export const App: React.FC = () => {
                   <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚚</span>
                   <IonLabel>Mi Camioneta</IonLabel>
                 </IonItem>
+
+                <IonItem 
+                  button 
+                  onClick={() => setCurrentView('users')} 
+                  style={{
+                    '--background': currentView === 'users' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                    '--color': currentView === 'users' ? 'var(--primary-color)' : 'var(--text-main)',
+                    '--border-radius': '8px',
+                    '--margin-bottom': '0.5rem',
+                    'fontWeight': 700,
+                    'fontSize': '0.9rem',
+                    'cursor': 'pointer'
+                  }}
+                  lines="none"
+                >
+                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>👤</span>
+                  <IonLabel>Catálogo de Usuarios</IonLabel>
+                </IonItem>
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -201,7 +226,7 @@ export const App: React.FC = () => {
 
                 <div className="brand" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span className="brand-name" style={{ fontSize: '1.05rem', fontWeight: 800 }}>
-                    {currentView === 'clients' ? '👥 Clientes' : currentView === 'products' ? '📦 Productos' : '🚚 Mi Camioneta'}
+                    {currentView === 'clients' ? '👥 Clientes' : currentView === 'products' ? '📦 Productos' : currentView === 'users' ? '👤 Usuarios' : '🚚 Mi Camioneta'}
                   </span>
                 </div>
               </div>
@@ -227,7 +252,7 @@ export const App: React.FC = () => {
 
           <IonContent style={{ '--background': 'var(--bg-color)' }}>
             <main className="main-container" style={{ padding: '1rem', minHeight: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {currentView === 'clients' ? (
+               {currentView === 'clients' ? (
                 <ClientModule 
                   onClientsUpdated={loadLocalData}
                   clients={clients}
@@ -239,10 +264,16 @@ export const App: React.FC = () => {
                   onProductsUpdated={loadLocalData}
                   products={products}
                 />
+              ) : currentView === 'users' ? (
+                <UserModule 
+                  users={users}
+                />
               ) : (
                 <TruckModule 
                   onInventoryUpdated={loadLocalData}
                   products={products}
+                  users={users}
+                  trucks={trucks}
                 />
               )}
 

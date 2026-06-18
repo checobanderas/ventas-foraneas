@@ -9,7 +9,7 @@ import {
   saveLocalPayment,
   saveLocalProduct
 } from './indexedDB';
-import type { Client, Payment, Product } from './indexedDB';
+import type { Client, Payment, Product, User, Truck } from './indexedDB';
 
 type SyncCallback = (status: {
   isSyncing: boolean;
@@ -441,12 +441,19 @@ class SyncService {
               await deleteDoc(doc(db, 'payments', item.documentId));
               await ldb.delete('payments', item.documentId);
             }
-          } else if (item.collection === 'products') {
+          } else if (item.collection === 'users') {
             if (item.action === 'create' || item.action === 'update') {
-              await setDoc(doc(db, 'products', item.documentId), item.payload, { merge: true });
+              await setDoc(doc(db, 'users', item.documentId), item.payload, { merge: true });
             } else if (item.action === 'delete') {
-              await deleteDoc(doc(db, 'products', item.documentId));
-              await ldb.delete('products', item.documentId);
+              await deleteDoc(doc(db, 'users', item.documentId));
+              await ldb.delete('users', item.documentId);
+            }
+          } else if (item.collection === 'trucks') {
+            if (item.action === 'create' || item.action === 'update') {
+              await setDoc(doc(db, 'trucks', item.documentId), item.payload, { merge: true });
+            } else if (item.action === 'delete') {
+              await deleteDoc(doc(db, 'trucks', item.documentId));
+              await ldb.delete('trucks', item.documentId);
             }
           }
 
@@ -552,6 +559,59 @@ class SyncService {
         }
       } catch (pErr) {
         console.warn("Could not sync products from Firestore:", pErr);
+      }
+
+      // 5. Pull down fresh users from Firestore
+      try {
+        const usersSnapshot = await getDocs(collection(db, 'users'));
+        const activeLocalUsers = await ldb.getAll('users');
+        for (const docSnap of usersSnapshot.docs) {
+          const remoteData = docSnap.data();
+          const user: User = {
+            id: docSnap.id,
+            name: remoteData.name,
+            username: remoteData.username,
+            role: remoteData.role,
+            phone: remoteData.phone,
+            mysqlId: remoteData.mysqlId !== undefined ? remoteData.mysqlId : null,
+            isActive: remoteData.isActive !== false,
+            updatedAt: remoteData.updatedAt || new Date().toISOString(),
+            syncStatus: 'synced'
+          };
+
+          const local = activeLocalUsers.find(u => u.id === user.id);
+          if (local && (local.syncStatus === 'pending-update' || local.syncStatus === 'pending-delete')) {
+            continue;
+          }
+          await ldb.put('users', user);
+        }
+      } catch (uErr) {
+        console.warn("Could not sync users from Firestore:", uErr);
+      }
+
+      // 6. Pull down fresh trucks from Firestore
+      try {
+        const trucksSnapshot = await getDocs(collection(db, 'trucks'));
+        const activeLocalTrucks = await ldb.getAll('trucks');
+        for (const docSnap of trucksSnapshot.docs) {
+          const remoteData = docSnap.data();
+          const truck: Truck = {
+            id: docSnap.id,
+            name: remoteData.name,
+            ecoNumber: remoteData.ecoNumber,
+            mysqlId: remoteData.mysqlId !== undefined ? remoteData.mysqlId : null,
+            updatedAt: remoteData.updatedAt || new Date().toISOString(),
+            syncStatus: 'synced'
+          };
+
+          const local = activeLocalTrucks.find(t => t.id === truck.id);
+          if (local && (local.syncStatus === 'pending-update' || local.syncStatus === 'pending-delete')) {
+            continue;
+          }
+          await ldb.put('trucks', truck);
+        }
+      } catch (tErr) {
+        console.warn("Could not sync trucks from Firestore:", tErr);
       }
 
       // 4. Update sync success metadata
