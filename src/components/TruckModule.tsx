@@ -1646,9 +1646,10 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         {clients
                           .filter(c => {
                             const term = clientSearchText.toLowerCase();
-                            // If search query is entered, bypass route check to allow finding office/unassigned clients
+                            // If search query is empty, show route-specific clients OR unassigned/office clients (routeId 0 or null).
+                            // If search query is entered, bypass route check entirely.
                             const matchesRoute = !term.trim()
-                              ? (!routeId || String(c.routeId) === routeId)
+                              ? (!routeId || String(c.routeId) === routeId || !c.routeId || c.routeId === 0 || String(c.routeId) === '0')
                               : true;
                             const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
                             return matchesRoute && matchesSearch;
