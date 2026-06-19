@@ -194,29 +194,44 @@ export const LogisticsModule: React.FC<LogisticsModuleProps> = ({
                       <thead>
                         <tr>
                           <th>Producto</th>
-                          <th style={{ textAlign: 'right', width: '80px' }}>Cantidad</th>
+                          <th style={{ textAlign: 'center', width: '65px' }}>Inicial</th>
+                          <th style={{ textAlign: 'center', width: '65px' }}>Recargas</th>
+                          <th style={{ textAlign: 'right', width: '65px' }}>Actual</th>
                         </tr>
                       </thead>
                       <tbody>
                         {products
-                          .filter(prod => selectedTruck.inventory && selectedTruck.inventory[prod.id] > 0)
+                          .filter(prod => {
+                            const initial = (selectedTruck.initialLoaded || {})[prod.id] || 0;
+                            const recharges = (selectedTruck.recharges || {})[prod.id] || 0;
+                            const current = (selectedTruck.inventory || {})[prod.id] || 0;
+                            return initial > 0 || recharges !== 0 || current > 0;
+                          })
                           .map(prod => {
-                            const qty = selectedTruck.inventory ? selectedTruck.inventory[prod.id] : 0;
+                            const initial = (selectedTruck.initialLoaded || {})[prod.id] || 0;
+                            const recharges = (selectedTruck.recharges || {})[prod.id] || 0;
+                            const current = (selectedTruck.inventory || {})[prod.id] || 0;
                             return (
                               <tr key={prod.id}>
                                 <td>
                                   <div style={{ fontWeight: 600 }}>{prod.name}</div>
                                   <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>SKU: #{prod.sku}</div>
                                 </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  {initial}
+                                </td>
+                                <td style={{ textAlign: 'center', color: recharges > 0 ? 'var(--accent-color)' : recharges < 0 ? 'var(--danger-color)' : 'var(--text-secondary)' }}>
+                                  {recharges > 0 ? `+${recharges}` : recharges === 0 ? '0' : recharges}
+                                </td>
                                 <td style={{ textAlign: 'right', fontWeight: 700 }}>
-                                  {qty} {prod.unit}
+                                  {current} {prod.unit}
                                 </td>
                               </tr>
                             );
                           })}
                         {(!selectedTruck.inventory || Object.values(selectedTruck.inventory).every(v => v === 0)) && (
                           <tr>
-                            <td colSpan={2} style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>
+                            <td colSpan={4} style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>
                               La camioneta no lleva mercancía cargada.
                             </td>
                           </tr>

@@ -433,12 +433,13 @@ export const App: React.FC = () => {
                    onTrucksUpdated={loadLocalData}
                  />
                ) : (
-                 <TruckModule 
-                   onInventoryUpdated={loadLocalData}
-                   products={products}
-                   users={users}
-                   trucks={trucks}
-                 />
+                  <TruckModule 
+                    onInventoryUpdated={loadLocalData}
+                    products={products}
+                    users={users}
+                    trucks={trucks}
+                    clients={clients}
+                  />
                )}
 
               {/* Sync Panel & Logs */}

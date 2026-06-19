@@ -33,6 +33,7 @@ export interface Product {
   syncStatus?: 'synced' | 'pending-create' | 'pending-update' | 'pending-delete';
   truckStock?: number | null;
   truckStockLoaded?: number | null;
+  truckStockRecharged?: number | null;
 }
 
 export interface User {
@@ -59,6 +60,8 @@ export interface Truck {
   activeRoute?: string | null;
   inventory?: { [productId: string]: number } | null;
   salesToday?: number | null;
+  recharges?: { [productId: string]: number } | null;
+  initialLoaded?: { [productId: string]: number } | null;
 }
 
 export interface Payment {

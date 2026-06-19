@@ -2,9 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { 
   IonGrid, 
   IonRow, 
-  IonCol
+  IonCol,
+  IonModal,
+  IonHeader,
+  IonToolbar,
+  IonTitle,
+  IonButtons,
+  IonButton,
+  IonContent
 } from '@ionic/react';
-import type { Product, User, Truck, Payment } from '../db/indexedDB';
+import type { Product, User, Truck, Payment, Client } from '../db/indexedDB';
 import { saveLocalProduct, getLocalPayments } from '../db/indexedDB';
 import { syncService } from '../db/syncService';
 
@@ -13,13 +20,15 @@ interface TruckModuleProps {
   products: Product[];
   users?: User[];
   trucks?: Truck[];
+  clients?: Client[];
 }
 
 export const TruckModule: React.FC<TruckModuleProps> = ({
   onInventoryUpdated,
   products,
   users = [],
-  trucks = []
+  trucks = [],
+  clients = []
 }) => {
   // Tabs Layout State
   const [activeTab, setActiveTab] = useState<'inventory' | 'cut'>('inventory');
@@ -36,6 +45,23 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   // Search & Brand Filter
   const [searchText, setSearchText] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
+
+  // Modals visibility state
+  const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
+  const [isRechargeModalOpen, setIsRechargeModalOpen] = useState(false);
+
+  // Sales modal states
+  const [selectedCartClient, setSelectedCartClient] = useState<Client | null>(null);
+  const [cartQuantities, setCartQuantities] = useState<{ [productId: string]: number }>({});
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
+  const [cartDiscount, setCartDiscount] = useState<number>(0);
+  const [productSearchText, setProductSearchText] = useState('');
+  const [clientSearchText, setClientSearchText] = useState('');
+
+  // Recharge modal states
+  const [rechargeQuantities, setRechargeQuantities] = useState<{ [productId: string]: number }>({});
+  const [rechargeSearchText, setRechargeSearchText] = useState('');
+  const [selectedRechargeBrand, setSelectedRechargeBrand] = useState('');
 
   const loadPayments = async () => {
     try {
@@ -156,7 +182,9 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
         activeDriver: driverName,
         activeRoute: routeId,
         inventory,
-        salesToday: 0
+        salesToday: 0,
+        initialLoaded: inventory,
+        recharges: {}
       });
 
       // Confirm settings in localStorage
@@ -255,6 +283,210 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     }
   };
 
+  const handleOpenSaleModal = () => {
+    setSelectedCartClient(null);
+    setCartQuantities({});
+    setPaymentMethod('cash');
+    setCartDiscount(0);
+    setProductSearchText('');
+    setClientSearchText('');
+    setIsSaleModalOpen(true);
+  };
+
+  const handleOpenRechargeModal = () => {
+    const initialRecharge: { [prodId: string]: number } = {};
+    products.forEach(p => {
+      initialRecharge[p.id] = p.truckStock || 0;
+    });
+    setRechargeQuantities(initialRecharge);
+    setRechargeSearchText('');
+    setSelectedRechargeBrand('');
+    setIsRechargeModalOpen(true);
+  };
+
+  const updateQuantity = (productId: string, delta: number) => {
+    const prod = products.find(p => p.id === productId);
+    if (!prod) return;
+    const maxStock = prod.truckStock || 0;
+
+    setCartQuantities(prev => {
+      const current = prev[productId] || 0;
+      const next = current + delta;
+      if (next > maxStock) {
+        alert(`No puedes vender más de la existencia en la camioneta (${maxStock} ${prod.unit}).`);
+        return prev;
+      }
+      if (next <= 0) {
+        const copy = { ...prev };
+        delete copy[productId];
+        return copy;
+      }
+      return { ...prev, [productId]: next };
+    });
+  };
+
+  const handleConfirmSale = async () => {
+    if (!selectedCartClient) return;
+
+    const subtotal = Object.entries(cartQuantities).reduce((sum, [productId, qty]) => {
+      const prod = products.find(p => p.id === productId);
+      return sum + (prod ? prod.price * qty : 0);
+    }, 0);
+
+    if (subtotal <= 0) {
+      alert("El carrito está vacío. Agrega al menos un producto.");
+      return;
+    }
+
+    const discountAmount = Number(cartDiscount) || 0;
+    if (discountAmount < 0) {
+      alert("El descuento no puede ser negativo.");
+      return;
+    }
+    if (discountAmount > subtotal) {
+      alert("El descuento no puede ser mayor que el subtotal.");
+      return;
+    }
+
+    const finalTotal = Math.max(0, subtotal - discountAmount);
+
+    for (const [prodId, qty] of Object.entries(cartQuantities)) {
+      const prod = products.find(p => p.id === prodId);
+      const maxStock = prod?.truckStock || 0;
+      if (!prod || maxStock < qty) {
+        alert(`Existencias insuficientes para ${prod?.name || prodId} en la camioneta.`);
+        return;
+      }
+    }
+
+    const itemsSold = Object.entries(cartQuantities)
+      .map(([prodId, qty]) => {
+        const prod = products.find(p => p.id === prodId);
+        return prod ? `${qty}x ${prod.name} (${prod.unit})` : '';
+      })
+      .filter(Boolean);
+
+    try {
+      const paymentId = `pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      await syncService.addPayment({
+        id: paymentId,
+        clientId: selectedCartClient.id,
+        clientName: selectedCartClient.name,
+        amount: finalTotal,
+        date: new Date().toISOString().split('T')[0],
+        paymentMethod: paymentMethod,
+        status: 'completed',
+        notes: `[Venta Camioneta] Venta: ${itemsSold.join(', ')}`,
+        subtotal: subtotal,
+        discount: discountAmount,
+        driverName: driverName,
+        truckPlates: truckPlates,
+        routeId: routeId
+      });
+
+      // Decrement product truckStock locally
+      for (const [prodId, qty] of Object.entries(cartQuantities)) {
+        const prod = products.find(p => p.id === prodId);
+        if (prod) {
+          const currentStock = prod.truckStock || 0;
+          const nextStock = Math.max(0, currentStock - qty);
+          await saveLocalProduct({
+            ...prod,
+            truckStock: nextStock
+          });
+        }
+      }
+
+      // Sync active truck inventory and sales
+      const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+      if (matchedTruck) {
+        const updatedInventory = { ...(matchedTruck.inventory || {}) };
+        for (const [prodId, qty] of Object.entries(cartQuantities)) {
+          if (updatedInventory[prodId] !== undefined) {
+            updatedInventory[prodId] = Math.max(0, updatedInventory[prodId] - qty);
+          }
+        }
+        const currentSalesToday = matchedTruck.salesToday || 0;
+        const nextSalesToday = currentSalesToday + finalTotal;
+        await syncService.updateTruck({
+          ...matchedTruck,
+          salesToday: nextSalesToday,
+          inventory: updatedInventory
+        });
+      }
+
+      alert(`¡Venta registrada con éxito!\nTotal: $${finalTotal.toFixed(2)}`);
+      
+      setCartQuantities({});
+      setPaymentMethod('cash');
+      setProductSearchText('');
+      setSelectedCartClient(null);
+      setCartDiscount(0);
+      setIsSaleModalOpen(false);
+      onInventoryUpdated();
+    } catch (err) {
+      console.error("Error confirming sale in TruckModule:", err);
+      alert("Error al registrar la venta.");
+    }
+  };
+
+  const handleConfirmRecharge = async () => {
+    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+    if (!matchedTruck) return;
+
+    try {
+      const updatedInventory: { [productId: string]: number } = { ...(matchedTruck.inventory || {}) };
+      const updatedRecharges = { ...(matchedTruck.recharges || {}) };
+
+      for (const prod of products) {
+        const oldStock = prod.truckStock || 0;
+        const newStock = rechargeQuantities[prod.id] !== undefined ? rechargeQuantities[prod.id] : oldStock;
+        const diff = newStock - oldStock;
+
+        if (diff !== 0) {
+          if (diff > 0 && (prod.stock || 0) < diff) {
+            alert(`No hay suficiente stock en bodega para recargar ${diff} unidades de ${prod.name}. Stock disponible: ${prod.stock}`);
+            return;
+          }
+
+          const currentLoaded = prod.truckStockLoaded || 0;
+          const currentRecharged = prod.truckStockRecharged || 0;
+
+          const newWarehouseStock = Math.max(0, (prod.stock || 0) - diff);
+          const nextRecharged = currentRecharged + diff;
+          const nextLoaded = diff > 0 ? currentLoaded + diff : currentLoaded;
+
+          const updatedProd: Product = {
+            ...prod,
+            truckStock: newStock,
+            truckStockLoaded: nextLoaded,
+            truckStockRecharged: nextRecharged,
+            stock: newWarehouseStock
+          };
+
+          await saveLocalProduct(updatedProd);
+          await syncService.updateProduct(updatedProd);
+
+          updatedInventory[prod.id] = newStock;
+          updatedRecharges[prod.id] = (updatedRecharges[prod.id] || 0) + diff;
+        }
+      }
+
+      await syncService.updateTruck({
+        ...matchedTruck,
+        inventory: updatedInventory,
+        recharges: updatedRecharges
+      });
+
+      alert("¡Recarga e inventario ajustados con éxito!");
+      setIsRechargeModalOpen(false);
+      onInventoryUpdated();
+    } catch (err) {
+      console.error("Error committing recharge:", err);
+      alert("Error al guardar la recarga de mercancía.");
+    }
+  };
+
   // Tab 2: Corte calculations
   const getCorteSalesSummary = () => {
     return payments.reduce((acc, p) => {
@@ -286,20 +518,31 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     const summary = getCorteSalesSummary();
     const invDiffList: any[] = [];
 
+    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
+    const initialLoadedMap = matchedTruck?.initialLoaded || {};
+    const rechargesMap = matchedTruck?.recharges || {};
+
     // Calculate inventory difference
     for (const prod of products) {
-      const loaded = prod.truckStockLoaded || 0;
+      const initial = initialLoadedMap[prod.id] || 0;
+      const recharges = rechargesMap[prod.id] || 0;
+
+      const totalLoadedFallback = prod.truckStockLoaded || 0;
+      const calcInitial = matchedTruck?.initialLoaded ? initial : totalLoadedFallback;
+      const calcRecharges = recharges;
+
       const expectedRemaining = prod.truckStock || 0;
-      const sold = Math.max(0, loaded - expectedRemaining);
+      const sold = Math.max(0, (calcInitial + calcRecharges) - expectedRemaining);
       const physical = physicalCounts[prod.id] !== undefined ? physicalCounts[prod.id] : expectedRemaining;
       const diff = physical - expectedRemaining;
 
-      if (loaded > 0 || expectedRemaining > 0 || physical > 0) {
+      if (calcInitial > 0 || calcRecharges !== 0 || expectedRemaining > 0 || physical > 0) {
         invDiffList.push({
           productId: prod.id,
           sku: prod.sku,
           name: prod.name,
-          loaded,
+          initialLoaded: calcInitial,
+          recharges: calcRecharges,
           sold,
           expectedRemaining,
           physical,
@@ -327,17 +570,21 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
 
       // Reset all stocks to 0
       for (const prod of products) {
-        if ((prod.truckStock && prod.truckStock > 0) || (prod.truckStockLoaded && prod.truckStockLoaded > 0)) {
+        if (
+          (prod.truckStock && prod.truckStock > 0) || 
+          (prod.truckStockLoaded && prod.truckStockLoaded > 0) ||
+          (prod.truckStockRecharged && prod.truckStockRecharged > 0)
+        ) {
           await saveLocalProduct({
             ...prod,
             truckStock: 0,
-            truckStockLoaded: 0
+            truckStockLoaded: 0,
+            truckStockRecharged: 0
           });
         }
       }
 
       // Sync active truck status reset
-      const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
       if (matchedTruck) {
         await syncService.updateTruck({
           ...matchedTruck,
@@ -345,7 +592,9 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
           activeDriver: null,
           activeRoute: null,
           salesToday: 0,
-          inventory: null
+          inventory: null,
+          initialLoaded: null,
+          recharges: null
         });
       }
 
@@ -518,6 +767,58 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   >
                     🚀 Dar Banderazo de Salida (Poner en Tránsito)
                   </button>
+                )}
+
+                {/* Active Transit Operations: Sell and Recharge buttons */}
+                {selectedTruckStatus === 'transito' && (
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+                    <button
+                      type="button"
+                      onClick={handleOpenSaleModal}
+                      className="btn btn-primary"
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+                        color: 'white',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        padding: '0.65rem 1rem',
+                        borderRadius: '8px',
+                        border: 'none',
+                        boxShadow: '0 4px 6px rgba(59, 130, 246, 0.2)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem'
+                      }}
+                    >
+                      🛒 Registrar Venta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenRechargeModal}
+                      className="btn btn-secondary"
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, #10B981, #059669)',
+                        color: 'white',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        padding: '0.65rem 1rem',
+                        borderRadius: '8px',
+                        border: 'none',
+                        boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem'
+                      }}
+                    >
+                      🔄 Registrar Recarga
+                    </button>
+                  </div>
                 )}
               </div>
             </IonCol>
@@ -772,7 +1073,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     <thead>
                       <tr>
                         <th>Producto</th>
-                        <th style={{ textAlign: 'center' }}>Cargado</th>
+                        <th style={{ textAlign: 'center' }}>Carga Inicial</th>
+                        <th style={{ textAlign: 'center' }}>Recargas</th>
                         <th style={{ textAlign: 'center' }}>Vendido</th>
                         <th style={{ textAlign: 'center' }}>Sobrante Esp.</th>
                         <th style={{ textAlign: 'center', width: '90px' }}>Físico</th>
@@ -781,11 +1083,23 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     </thead>
                     <tbody>
                       {products
-                        .filter(p => (p.truckStockLoaded && p.truckStockLoaded > 0) || (p.truckStock && p.truckStock > 0))
+                        .filter(p => {
+                          const initial = (selectedTruckObj?.initialLoaded || {})[p.id] || 0;
+                          const recharges = (selectedTruckObj?.recharges || {})[p.id] || 0;
+                          const current = p.truckStock || 0;
+                          const loaded = p.truckStockLoaded || 0;
+                          return initial > 0 || recharges !== 0 || current > 0 || loaded > 0;
+                        })
                         .map(prod => {
-                          const loaded = prod.truckStockLoaded || 0;
+                          const initial = (selectedTruckObj?.initialLoaded || {})[prod.id] || 0;
+                          const recharges = (selectedTruckObj?.recharges || {})[prod.id] || 0;
+                          
+                          const totalLoadedFallback = prod.truckStockLoaded || 0;
+                          const calcInitial = selectedTruckObj?.initialLoaded ? initial : totalLoadedFallback;
+                          const calcRecharges = recharges;
+
                           const expected = prod.truckStock || 0;
-                          const sold = Math.max(0, loaded - expected);
+                          const sold = Math.max(0, (calcInitial + calcRecharges) - expected);
                           const physical = physicalCounts[prod.id] !== undefined ? physicalCounts[prod.id] : expected;
                           const diff = physical - expected;
 
@@ -799,7 +1113,10 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   SKU: #{prod.sku} ({prod.unit})
                                 </div>
                               </td>
-                              <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{loaded}</td>
+                              <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{calcInitial}</td>
+                              <td style={{ textAlign: 'center', fontSize: '0.8rem', color: calcRecharges > 0 ? 'var(--accent-color)' : calcRecharges < 0 ? 'var(--danger-color)' : 'var(--text-secondary)' }}>
+                                {calcRecharges > 0 ? `+${calcRecharges}` : calcRecharges === 0 ? '0' : calcRecharges}
+                              </td>
                               <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{sold}</td>
                               <td style={{ textAlign: 'center', fontSize: '0.8rem', fontWeight: 600 }}>{expected}</td>
                               <td style={{ textAlign: 'center' }}>
@@ -836,9 +1153,15 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                             </tr>
                           );
                         })}
-                      {products.filter(p => (p.truckStockLoaded && p.truckStockLoaded > 0) || (p.truckStock && p.truckStock > 0)).length === 0 && (
+                      {products.filter(p => {
+                        const initial = (selectedTruckObj?.initialLoaded || {})[p.id] || 0;
+                        const recharges = (selectedTruckObj?.recharges || {})[p.id] || 0;
+                        const current = p.truckStock || 0;
+                        const loaded = p.truckStockLoaded || 0;
+                        return initial > 0 || recharges !== 0 || current > 0 || loaded > 0;
+                      }).length === 0 && (
                         <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                          <td colSpan={7} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                             No hay productos cargados en la camioneta hoy.
                           </td>
                         </tr>
@@ -862,6 +1185,419 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
           </IonRow>
         </>
       )}
+      {/* ================= MODAL DE VENTAS ================= */}
+      <IonModal isOpen={isSaleModalOpen} onDidDismiss={() => setIsSaleModalOpen(false)}>
+        <IonHeader>
+          <IonToolbar style={{ '--background': 'var(--primary-color)', '--color': 'white' }}>
+            <IonTitle style={{ fontWeight: 800, fontSize: '1rem' }}>🛒 Registrar Venta - Camioneta</IonTitle>
+            <IonButtons slot="end">
+              <IonButton onClick={() => setIsSaleModalOpen(false)} style={{ '--color': 'white' }}>Cerrar</IonButton>
+            </IonButtons>
+          </IonToolbar>
+        </IonHeader>
+
+        <IonContent className="ion-padding" style={{ '--background': 'var(--bg-color)' }}>
+          <div style={{ padding: '1rem' }}>
+            {!selectedCartClient ? (
+              <>
+                <h4 style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
+                  Selecciona un Cliente ({routeId ? `Ruta ${routeId}` : 'Sin Ruta'}):
+                </h4>
+                
+                {/* Search client input */}
+                <input
+                  type="text"
+                  placeholder="Buscar cliente por nombre o dirección..."
+                  value={clientSearchText}
+                  onChange={(e) => setClientSearchText(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.85rem',
+                    border: '1px solid var(--card-border)',
+                    borderRadius: '8px',
+                    marginBottom: '1rem',
+                    background: 'white',
+                    color: 'black'
+                  }}
+                />
+
+                <div className="table-responsive" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                  <table className="client-table" style={{ fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Dirección</th>
+                        <th style={{ width: '80px', textAlign: 'center' }}>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clients
+                        .filter(c => {
+                          const matchesRoute = !routeId || String(c.routeId) === routeId;
+                          const term = clientSearchText.toLowerCase();
+                          const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
+                          return matchesRoute && matchesSearch;
+                        })
+                        .map(c => (
+                          <tr key={c.id}>
+                            <td style={{ fontWeight: 600 }}>{c.name}</td>
+                            <td style={{ color: 'var(--text-secondary)' }}>{c.address || 'Sin Dirección'}</td>
+                            <td style={{ textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => setSelectedCartClient(c)}
+                                style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', width: 'auto' }}
+                              >
+                                Seleccionar
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Cart details and Products to sell */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h4 style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-main)', margin: 0 }}>
+                    Cliente: {selectedCartClient.name}
+                  </h4>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setSelectedCartClient(null)}
+                    style={{ width: 'auto', fontSize: '0.7rem', padding: '0.3rem 0.6rem' }}
+                  >
+                    ← Cambiar Cliente
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', position: 'relative', marginBottom: '1rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Buscar producto en inventario..."
+                    value={productSearchText}
+                    onChange={(e) => setProductSearchText(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      border: '1px solid var(--card-border)',
+                      borderRadius: '8px',
+                      background: 'white',
+                      color: 'black'
+                    }}
+                  />
+                </div>
+
+                {/* Products available in truck stock */}
+                <div className="table-responsive" style={{ maxHeight: '250px', overflowY: 'auto', marginBottom: '1rem' }}>
+                  <table className="client-table" style={{ fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th style={{ textAlign: 'center', width: '80px' }}>Disponible</th>
+                        <th style={{ textAlign: 'center', width: '120px' }}>Vender</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {products
+                        .filter(p => {
+                          const hasStock = p.truckStock && p.truckStock > 0;
+                          const term = productSearchText.toLowerCase();
+                          const matchesSearch = p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term);
+                          return hasStock && matchesSearch;
+                        })
+                        .map(prod => {
+                          const inCart = cartQuantities[prod.id] || 0;
+                          return (
+                            <tr key={prod.id}>
+                              <td>
+                                <div style={{ fontWeight: 600 }}>{prod.name}</div>
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>SKU: #{prod.sku} • Price: ${prod.price.toFixed(2)}</div>
+                              </td>
+                              <td style={{ textAlign: 'center', fontWeight: 600 }}>{prod.truckStock}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
+                                  <button
+                                    type="button"
+                                    className="emoji-action-btn"
+                                    onClick={() => updateQuantity(prod.id, -1)}
+                                    style={{ padding: '0.2rem 0.4rem', fontSize: '0.7rem' }}
+                                  >
+                                    ➖
+                                  </button>
+                                  <span style={{ minWidth: '20px', fontWeight: 700 }}>{inCart}</span>
+                                  <button
+                                    type="button"
+                                    className="emoji-action-btn"
+                                    onClick={() => updateQuantity(prod.id, 1)}
+                                    style={{ padding: '0.2rem 0.4rem', fontSize: '0.7rem' }}
+                                  >
+                                    ➕
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      {products.filter(p => p.truckStock && p.truckStock > 0).length === 0 && (
+                        <tr>
+                          <td colSpan={3} style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>
+                            No hay productos cargados en esta camioneta.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Totals & Payment Method */}
+                <div style={{ background: 'rgba(0,0,0,0.03)', padding: '1rem', borderRadius: '8px', fontSize: '0.85rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                    <span>Subtotal:</span>
+                    <span style={{ fontWeight: 700 }}>
+                      ${Object.entries(cartQuantities).reduce((sum, [pId, q]) => sum + ((products.find(p => p.id === pId)?.price || 0) * q), 0).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span>Descuento ($):</span>
+                    <input
+                      type="number"
+                      value={cartDiscount}
+                      onChange={(e) => setCartDiscount(Math.max(0, parseFloat(e.target.value) || 0))}
+                      style={{ width: '80px', padding: '0.25rem', fontSize: '0.8rem', textAlign: 'right', border: '1px solid var(--card-border)', borderRadius: '4px' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', fontWeight: 800, borderTop: '1px solid var(--card-border)', paddingTop: '0.5rem', marginBottom: '0.75rem', color: 'var(--primary-color)' }}>
+                    <span>Total a Cobrar:</span>
+                    <span>
+                      ${Math.max(0, Object.entries(cartQuantities).reduce((sum, [pId, q]) => sum + ((products.find(p => p.id === pId)?.price || 0) * q), 0) - cartDiscount).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.25rem' }}>Método de Pago:</label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as any)}
+                      className="form-control"
+                      style={{ fontSize: '0.8rem', padding: '0.3rem' }}
+                    >
+                      <option value="cash">Efectivo 💵</option>
+                      <option value="card">Tarjeta 💳</option>
+                      <option value="transfer">Transferencia 🏦</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleConfirmSale}
+                    style={{ width: '100%', padding: '0.6rem', fontWeight: 700 }}
+                  >
+                    Confirmar Venta 💵
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </IonContent>
+      </IonModal>
+
+      {/* ================= MODAL DE RECARGAS ================= */}
+      <IonModal isOpen={isRechargeModalOpen} onDidDismiss={() => setIsRechargeModalOpen(false)}>
+        <IonHeader>
+          <IonToolbar style={{ '--background': 'var(--accent-color)', '--color': 'white' }}>
+            <IonTitle style={{ fontWeight: 800, fontSize: '1rem' }}>🔄 Registrar Recarga / Ajustes</IonTitle>
+            <IonButtons slot="end">
+              <IonButton onClick={() => setIsRechargeModalOpen(false)} style={{ '--color': 'white' }}>Cerrar</IonButton>
+            </IonButtons>
+          </IonToolbar>
+        </IonHeader>
+
+        <IonContent className="ion-padding" style={{ '--background': 'var(--bg-color)' }}>
+          <div style={{ padding: '1rem' }}>
+            <h4 style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
+              Ajustar inventario actual de la camioneta:
+            </h4>
+
+            {/* Filter and Search controls */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input
+                type="text"
+                placeholder="Buscar producto por nombre o SKU..."
+                value={rechargeSearchText}
+                onChange={(e) => setRechargeSearchText(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '0.45rem 0.75rem',
+                  fontSize: '0.85rem',
+                  border: '1px solid var(--card-border)',
+                  borderRadius: '8px',
+                  background: 'white',
+                  color: 'black'
+                }}
+              />
+              <select
+                value={selectedRechargeBrand}
+                onChange={(e) => setSelectedRechargeBrand(e.target.value)}
+                style={{
+                  padding: '0.45rem',
+                  fontSize: '0.85rem',
+                  border: '1px solid var(--card-border)',
+                  borderRadius: '8px',
+                  background: 'white',
+                  color: 'black',
+                  minWidth: '100px'
+                }}
+              >
+                <option value="">Marcas</option>
+                {uniqueBrands.map(b => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto', marginBottom: '1.25rem' }}>
+              <table className="client-table" style={{ fontSize: '0.8rem' }}>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>Bodega</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>Actual</th>
+                    <th style={{ textAlign: 'center', width: '130px' }}>Nuevo Stock Camioneta</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>Ajuste</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products
+                    .filter(prod => {
+                      const matchesSearch = 
+                        prod.name.toLowerCase().includes(rechargeSearchText.toLowerCase()) ||
+                        prod.sku.toLowerCase().includes(rechargeSearchText.toLowerCase());
+                      const matchesBrand = !selectedRechargeBrand || prod.brand === selectedRechargeBrand;
+                      return matchesSearch && matchesBrand;
+                    })
+                    .map(prod => {
+                      const oldStock = prod.truckStock || 0;
+                      const newStock = rechargeQuantities[prod.id] !== undefined ? rechargeQuantities[prod.id] : oldStock;
+                      const diff = newStock - oldStock;
+
+                      const handleAdjust = (val: number) => {
+                        const next = Math.max(0, newStock + val);
+                        setRechargeQuantities(prev => ({
+                          ...prev,
+                          [prod.id]: next
+                        }));
+                      };
+
+                      return (
+                        <tr key={prod.id}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{prod.name}</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>SKU: #{prod.sku}</div>
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{prod.stock}</td>
+                          <td style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>{oldStock}</td>
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                              <button
+                                type="button"
+                                className="emoji-action-btn"
+                                onClick={() => handleAdjust(-10)}
+                                style={{ padding: '0.15rem 0.35rem', fontSize: '0.65rem' }}
+                              >
+                                -10
+                              </button>
+                              <button
+                                type="button"
+                                className="emoji-action-btn"
+                                onClick={() => handleAdjust(-1)}
+                                style={{ padding: '0.15rem 0.35rem', fontSize: '0.65rem' }}
+                              >
+                                ➖
+                              </button>
+                              <input
+                                type="number"
+                                value={newStock}
+                                onChange={(e) => {
+                                  const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                  setRechargeQuantities(prev => ({
+                                    ...prev,
+                                    [prod.id]: isNaN(val) ? 0 : Math.max(0, val)
+                                  }));
+                                }}
+                                style={{
+                                  width: '40px',
+                                  padding: '0.2rem',
+                                  textAlign: 'center',
+                                  fontSize: '0.8rem',
+                                  border: '1px solid var(--card-border)',
+                                  borderRadius: '4px',
+                                  background: 'white',
+                                  color: 'black'
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="emoji-action-btn"
+                                onClick={() => handleAdjust(1)}
+                                style={{ padding: '0.15rem 0.35rem', fontSize: '0.65rem' }}
+                              >
+                                ➕
+                              </button>
+                              <button
+                                type="button"
+                                className="emoji-action-btn"
+                                onClick={() => handleAdjust(10)}
+                                style={{ padding: '0.15rem 0.35rem', fontSize: '0.65rem' }}
+                              >
+                                +10
+                              </button>
+                            </div>
+                          </td>
+                          <td style={{ 
+                            textAlign: 'center', 
+                            fontWeight: 700, 
+                            color: diff === 0 ? 'var(--text-secondary)' : diff > 0 ? 'var(--accent-color)' : 'var(--danger-color)'
+                          }}>
+                            {diff === 0 ? '--' : diff > 0 ? `+${diff}` : diff}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleConfirmRecharge}
+              style={{
+                width: '100%',
+                padding: '0.65rem',
+                fontSize: '0.9rem',
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #10B981, #059669)',
+                border: 'none',
+                borderRadius: '8px',
+                color: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              Confirmar Guardar Recarga / Ajustes 💾
+            </button>
+          </div>
+        </IonContent>
+      </IonModal>
     </IonGrid>
   );
 };

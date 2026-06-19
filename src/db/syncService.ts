@@ -645,8 +645,10 @@ class SyncService {
           if (local && (local.syncStatus === 'pending-update' || local.syncStatus === 'pending-delete')) {
             continue;
           }
-          if (local && local.truckStock !== undefined) {
-            product.truckStock = local.truckStock;
+          if (local) {
+            if (local.truckStock !== undefined) product.truckStock = local.truckStock;
+            if (local.truckStockLoaded !== undefined) product.truckStockLoaded = local.truckStockLoaded;
+            if (local.truckStockRecharged !== undefined) product.truckStockRecharged = local.truckStockRecharged;
           }
           await ldb.put('products', product);
         }
@@ -699,7 +701,9 @@ class SyncService {
             activeDriver: remoteData.activeDriver || null,
             activeRoute: remoteData.activeRoute || null,
             inventory: remoteData.inventory || null,
-            salesToday: remoteData.salesToday !== undefined ? Number(remoteData.salesToday) : 0
+            salesToday: remoteData.salesToday !== undefined ? Number(remoteData.salesToday) : 0,
+            recharges: remoteData.recharges || null,
+            initialLoaded: remoteData.initialLoaded || null
           };
 
           const local = activeLocalTrucks.find(t => t.id === truck.id);
