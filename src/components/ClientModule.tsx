@@ -67,7 +67,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const [productSearchText, setProductSearchText] = useState('');
   const [selectedCartCategory, setSelectedCartCategory] = useState<string>('');
   const [cartDiscount, setCartDiscount] = useState<number>(0);
-  const [saleMode, setSaleMode] = useState<'truck' | 'warehouse'>('truck');
+  const saleMode = 'warehouse' as 'truck' | 'warehouse';
 
   const loadPayments = async () => {
     try {
@@ -500,34 +500,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                 <div style={{ fontSize: '0.85rem', color: 'var(--secondary-color)', fontWeight: 600 }}>
                   💵 Nos debe: ${activeClientDebt.toFixed(2)}
                 </div>
-                
-                {/* Sale Mode Selector */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  <button
-                    type="button"
-                    className={`btn ${saleMode === 'truck' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => {
-                      setSaleMode('truck');
-                      setCartQuantities({});
-                      setCartDiscount(0);
-                    }}
-                    style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', height: '32px' }}
-                  >
-                    🚚 Venta en Camioneta
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn ${saleMode === 'warehouse' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => {
-                      setSaleMode('warehouse');
-                      setCartQuantities({});
-                      setCartDiscount(0);
-                    }}
-                    style={{ flex: 1, padding: '0.4rem', fontSize: '0.75rem', height: '32px' }}
-                  >
-                    🏭 Venta en Bodega
-                  </button>
-                </div>
+
               </div>
 
               {/* Product Search Filter */}

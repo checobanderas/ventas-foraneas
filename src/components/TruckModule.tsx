@@ -58,6 +58,99 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   const [productSearchText, setProductSearchText] = useState('');
   const [clientSearchText, setClientSearchText] = useState('');
 
+  // New Client Registration States (for Truck sales)
+  const [showAddClientForm, setShowAddClientForm] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [newClientPhone, setNewClientPhone] = useState('');
+  const [newClientAddress, setNewClientAddress] = useState('');
+  const [newClientInitialBalance, setNewClientInitialBalance] = useState<number | null>(null);
+  const [newClientLatitude, setNewClientLatitude] = useState<number | null>(null);
+  const [newClientLongitude, setNewClientLongitude] = useState<number | null>(null);
+  const [newClientGeoLoading, setNewClientGeoLoading] = useState(false);
+  const [newClientGeoError, setNewClientGeoError] = useState<string | null>(null);
+
+  const clearNewClientForm = () => {
+    setNewClientName('');
+    setNewClientPhone('');
+    setNewClientAddress('');
+    setNewClientInitialBalance(null);
+    setNewClientLatitude(null);
+    setNewClientLongitude(null);
+    setNewClientGeoError(null);
+    setNewClientGeoLoading(false);
+  };
+
+  const handleGetNewClientLocation = () => {
+    if (!navigator.geolocation) {
+      setNewClientGeoError('Geolocalización no soportada.');
+      return;
+    }
+
+    setNewClientGeoLoading(true);
+    setNewClientGeoError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setNewClientLatitude(position.coords.latitude);
+        setNewClientLongitude(position.coords.longitude);
+        setNewClientGeoLoading(false);
+      },
+      (error) => {
+        console.error('Error getting geolocation for new client:', error);
+        let errorMsg = 'Error al obtener ubicación.';
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMsg = 'Permiso denegado.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMsg = 'Ubicación no disponible.';
+        } else if (error.code === error.TIMEOUT) {
+          errorMsg = 'Tiempo agotado.';
+        }
+        setNewClientGeoError(errorMsg);
+        setNewClientGeoLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  const handleSaveNewClient = async () => {
+    if (!newClientName.trim()) return;
+
+    try {
+      const newId = `cli_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const activeRouteIdVal = routeId ? Number(routeId) : null;
+      
+      const nowStr = new Date().toISOString();
+      const newClientObj = {
+        id: newId,
+        name: newClientName,
+        email: '',
+        phone: newClientPhone,
+        address: newClientAddress || 'Sin Dirección Registrada',
+        latitude: newClientLatitude,
+        longitude: newClientLongitude,
+        initialBalance: newClientInitialBalance !== null ? Number(newClientInitialBalance) : 0,
+        initialBalanceDate: new Date().toISOString().split('T')[0],
+        routeId: activeRouteIdVal,
+        syncStatus: 'pending-create' as const,
+        createdAt: nowStr,
+        updatedAt: nowStr
+      };
+
+      await syncService.addClient(newClientObj);
+      
+      // Auto-select client to go directly to cart
+      setSelectedCartClient(newClientObj);
+      setShowAddClientForm(false);
+      clearNewClientForm();
+
+      // Refresh parent client states
+      onInventoryUpdated();
+    } catch (err) {
+      console.error("Error registering new client inline:", err);
+      alert("Error al registrar el cliente.");
+    }
+  };
+
   // Recharge modal states
   const [rechargeQuantities, setRechargeQuantities] = useState<{ [productId: string]: number }>({});
   const [rechargeSearchText, setRechargeSearchText] = useState('');
@@ -290,6 +383,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     setCartDiscount(0);
     setProductSearchText('');
     setClientSearchText('');
+    setShowAddClientForm(false);
+    clearNewClientForm();
     setIsSaleModalOpen(true);
   };
 
@@ -674,72 +769,99 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </div>
                 )}
 
-                <form onSubmit={handleSaveConfig}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
-                    
-                    <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>Chofer / Vendedor</label>
-                      <select
-                        className="form-control"
-                        value={driverName}
-                        onChange={(e) => setDriverName(e.target.value)}
-                        style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                        disabled={isConfigDisabled}
-                      >
-                        <option value="">Seleccionar Chofer</option>
-                        {users
-                          .filter(u => u.role === 'driver' && u.isActive)
-                          .map(u => (
-                             <option key={u.id} value={u.name}>
-                               {u.name}
-                             </option>
-                          ))}
-                      </select>
+                {selectedTruckStatus === 'transito' ? (
+                  <div style={{
+                    padding: '0.85rem 1.05rem',
+                    borderRadius: '8px',
+                    background: 'rgba(59, 130, 246, 0.08)',
+                    border: '1px solid rgba(59, 130, 246, 0.15)',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-main)',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '1rem 2rem',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '1rem'
+                  }}>
+                    <div>
+                      👤 <strong>Chofer / Vendedor:</strong> {driverName}
                     </div>
-
-                    <div className="form-group" style={{ flex: '0 0 120px', marginBottom: 0 }}>
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>Ruta Asignada</label>
-                      <select
-                        className="form-control"
-                        value={routeId}
-                        onChange={(e) => setRouteId(e.target.value)}
-                        style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                        disabled={isConfigDisabled}
-                      >
-                        <option value="">Seleccionar</option>
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(r => (
-                          <option key={r} value={String(r)}>Ruta {r}</option>
-                        ))}
-                      </select>
+                    <div>
+                      🛣️ <strong>Ruta:</strong> Ruta {routeId}
                     </div>
-
-                    <div className="form-group" style={{ flex: '0 0 180px', marginBottom: 0 }}>
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>Placas de Unidad</label>
-                      <select
-                        className="form-control"
-                        value={truckPlates}
-                        onChange={(e) => handleTruckPlatesChange(e.target.value)}
-                        style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                      >
-                        <option value="">Seleccionar Unidad</option>
-                        {trucks.map(t => (
-                          <option key={t.id} value={`${t.name} (Eco: ${t.ecoNumber})`}>
-                            {t.name} (Eco: {t.ecoNumber})
-                          </option>
-                        ))}
-                      </select>
+                    <div>
+                      🚚 <strong>Placas de Unidad:</strong> {truckPlates}
                     </div>
-
-                    <button 
-                      type="submit" 
-                      className="btn btn-primary"
-                      style={{ width: 'auto', padding: '0.55rem 1rem', fontSize: '0.85rem', height: '38px' }}
-                      disabled={isConfigDisabled}
-                    >
-                      Guardar 💾
-                    </button>
                   </div>
-                </form>
+                ) : (
+                  <form onSubmit={handleSaveConfig}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
+                      
+                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Chofer / Vendedor</label>
+                        <select
+                          className="form-control"
+                          value={driverName}
+                          onChange={(e) => setDriverName(e.target.value)}
+                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
+                          disabled={isConfigDisabled}
+                        >
+                          <option value="">Seleccionar Chofer</option>
+                          {users
+                            .filter(u => u.role === 'driver' && u.isActive)
+                            .map(u => (
+                               <option key={u.id} value={u.name}>
+                                 {u.name}
+                               </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ flex: '0 0 120px', marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Ruta Asignada</label>
+                        <select
+                          className="form-control"
+                          value={routeId}
+                          onChange={(e) => setRouteId(e.target.value)}
+                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
+                          disabled={isConfigDisabled}
+                        >
+                          <option value="">Seleccionar</option>
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(r => (
+                            <option key={r} value={String(r)}>Ruta {r}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ flex: '0 0 180px', marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Placas de Unidad</label>
+                        <select
+                          className="form-control"
+                          value={truckPlates}
+                          onChange={(e) => handleTruckPlatesChange(e.target.value)}
+                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
+                        >
+                          <option value="">Seleccionar Unidad</option>
+                          {trucks.map(t => (
+                            <option key={t.id} value={`${t.name} (Eco: ${t.ecoNumber})`}>
+                              {t.name} (Eco: {t.ecoNumber})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        className="btn btn-primary"
+                        style={{ width: 'auto', padding: '0.55rem 1rem', fontSize: '0.85rem', height: '38px' }}
+                        disabled={isConfigDisabled}
+                      >
+                        Guardar 💾
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {/* Dispatch Banderazo Button */}
                 {(selectedTruckStatus === 'bodega' || selectedTruckStatus === 'esperando_salida') && driverName && truckPlates && routeId && (
@@ -1199,66 +1321,198 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
         <IonContent className="ion-padding" style={{ '--background': 'var(--bg-color)' }}>
           <div style={{ padding: '1rem' }}>
             {!selectedCartClient ? (
-              <>
-                <h4 style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
-                  Selecciona un Cliente ({routeId ? `Ruta ${routeId}` : 'Sin Ruta'}):
-                </h4>
-                
-                {/* Search client input */}
-                <input
-                  type="text"
-                  placeholder="Buscar cliente por nombre o dirección..."
-                  value={clientSearchText}
-                  onChange={(e) => setClientSearchText(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.85rem',
-                    border: '1px solid var(--card-border)',
-                    borderRadius: '8px',
-                    marginBottom: '1rem',
-                    background: 'white',
-                    color: 'black'
-                  }}
-                />
+              showAddClientForm ? (
+                <div className="glass-card" style={{ padding: '1.25rem', background: 'white', color: 'black', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                  <h4 style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--primary-color)', margin: '0 0 1.25rem 0' }}>
+                    ➕ Registrar Nuevo Cliente (Ruta {routeId || 'N/A'})
+                  </h4>
+                  
+                  <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Nombre del Cliente *</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ej. Juan Pérez"
+                      value={newClientName}
+                      onChange={(e) => setNewClientName(e.target.value)}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                      required
+                    />
+                  </div>
 
-                <div className="table-responsive" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                  <table className="client-table" style={{ fontSize: '0.8rem' }}>
-                    <thead>
-                      <tr>
-                        <th>Cliente</th>
-                        <th>Dirección</th>
-                        <th style={{ width: '80px', textAlign: 'center' }}>Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clients
-                        .filter(c => {
-                          const matchesRoute = !routeId || String(c.routeId) === routeId;
-                          const term = clientSearchText.toLowerCase();
-                          const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
-                          return matchesRoute && matchesSearch;
-                        })
-                        .map(c => (
-                          <tr key={c.id}>
-                            <td style={{ fontWeight: 600 }}>{c.name}</td>
-                            <td style={{ color: 'var(--text-secondary)' }}>{c.address || 'Sin Dirección'}</td>
-                            <td style={{ textAlign: 'center' }}>
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                onClick={() => setSelectedCartClient(c)}
-                                style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', width: 'auto' }}
-                              >
-                                Seleccionar
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                  <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Teléfono</label>
+                    <input
+                      type="tel"
+                      className="form-control"
+                      placeholder="Ej. 9511234567"
+                      value={newClientPhone}
+                      onChange={(e) => setNewClientPhone(e.target.value)}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Dirección / Localidad</label>
+                    <textarea
+                      className="form-control"
+                      rows={2}
+                      placeholder="Ej. Av. Juárez #102, Centro"
+                      value={newClientAddress}
+                      onChange={(e) => setNewClientAddress(e.target.value)}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px', resize: 'vertical' }}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Saldo Inicial ($)</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      placeholder="Ej. 0.00"
+                      value={newClientInitialBalance !== null ? newClientInitialBalance : ''}
+                      onChange={(e) => setNewClientInitialBalance(e.target.value !== '' ? Number(e.target.value) : null)}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Geolocalización (Coordenadas)</label>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Latitud"
+                        value={newClientLatitude !== null ? newClientLatitude.toFixed(6) : ''}
+                        style={{ fontSize: '0.85rem', padding: '0.45rem', flex: 1, border: '1px solid var(--card-border)', borderRadius: '6px', background: '#f9f9f9' }}
+                        readOnly
+                      />
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Longitud"
+                        value={newClientLongitude !== null ? newClientLongitude.toFixed(6) : ''}
+                        style={{ fontSize: '0.85rem', padding: '0.45rem', flex: 1, border: '1px solid var(--card-border)', borderRadius: '6px', background: '#f9f9f9' }}
+                        readOnly
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ width: '38px', height: '38px', padding: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '38px', borderRadius: '6px', cursor: 'pointer' }}
+                        title="Capturar Ubicación GPS actual"
+                        onClick={handleGetNewClientLocation}
+                        disabled={newClientGeoLoading}
+                      >
+                        🎯
+                      </button>
+                    </div>
+                    {newClientGeoError && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--danger-color)', display: 'block', marginTop: '0.25rem' }}>
+                        {newClientGeoError}
+                      </span>
+                    )}
+                    {newClientLatitude !== null && newClientLongitude !== null && !newClientGeoError && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-color)', marginTop: '0.25rem', fontWeight: 600 }}>
+                        ✓ Ubicación capturada
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowAddClientForm(false)}
+                      style={{ flex: 1, padding: '0.55rem', fontSize: '0.85rem' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleSaveNewClient}
+                      disabled={!newClientName.trim()}
+                      style={{ flex: 1, padding: '0.55rem', fontSize: '0.85rem' }}
+                    >
+                      Registrar y Vender 🛒
+                    </button>
+                  </div>
                 </div>
-              </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <h4 style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', margin: 0 }}>
+                      Selecciona un Cliente ({routeId ? `Ruta ${routeId}` : 'Sin Ruta'}):
+                    </h4>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        setShowAddClientForm(true);
+                        clearNewClientForm();
+                      }}
+                      style={{ width: 'auto', padding: '0.35rem 0.65rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem', borderRadius: '6px' }}
+                    >
+                      ➕ Registrar Nuevo Cliente
+                    </button>
+                  </div>
+                  
+                  {/* Search client input */}
+                  <input
+                    type="text"
+                    placeholder="Buscar cliente por nombre o dirección..."
+                    value={clientSearchText}
+                    onChange={(e) => setClientSearchText(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.85rem',
+                      border: '1px solid var(--card-border)',
+                      borderRadius: '8px',
+                      marginBottom: '1rem',
+                      background: 'white',
+                      color: 'black'
+                    }}
+                  />
+
+                  <div className="table-responsive" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                    <table className="client-table" style={{ fontSize: '0.8rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Cliente</th>
+                          <th>Dirección</th>
+                          <th style={{ width: '80px', textAlign: 'center' }}>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clients
+                          .filter(c => {
+                            const matchesRoute = !routeId || String(c.routeId) === routeId;
+                            const term = clientSearchText.toLowerCase();
+                            const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
+                            return matchesRoute && matchesSearch;
+                          })
+                          .map(c => (
+                            <tr key={c.id}>
+                              <td style={{ fontWeight: 600 }}>{c.name}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{c.address || 'Sin Dirección'}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={() => setSelectedCartClient(c)}
+                                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', width: 'auto' }}
+                                >
+                                  Seleccionar
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )
             ) : (
               <>
                 {/* Cart details and Products to sell */}
