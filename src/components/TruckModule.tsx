@@ -21,6 +21,7 @@ interface TruckModuleProps {
   users?: User[];
   trucks?: Truck[];
   clients?: Client[];
+  activeSessionUser?: string;
 }
 
 export const TruckModule: React.FC<TruckModuleProps> = ({
@@ -28,7 +29,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   products,
   users = [],
   trucks = [],
-  clients = []
+  clients = [],
+  activeSessionUser = 'admin'
 }) => {
   // Tabs Layout State
   const [activeTab, setActiveTab] = useState<'inventory' | 'cut'>('inventory');
@@ -57,6 +59,15 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   const [cartDiscount, setCartDiscount] = useState<number>(0);
   const [productSearchText, setProductSearchText] = useState('');
   const [clientSearchText, setClientSearchText] = useState('');
+
+  const [cartProductDiscounts, setCartProductDiscounts] = useState<{ [productId: string]: number }>({});
+  const [lastFourDigits, setLastFourDigits] = useState<string>('');
+
+  useEffect(() => {
+    setRouteId(localStorage.getItem('active_route_id') || '');
+    setTruckPlates(localStorage.getItem('active_truck_plates') || '');
+    setDriverName(localStorage.getItem('active_driver_name') || '');
+  }, [activeSessionUser]);
 
   // New Client Registration States (for Truck sales)
   const [showAddClientForm, setShowAddClientForm] = useState(false);
@@ -193,6 +204,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   const selectedTruckStatus = selectedTruckObj?.status || 'bodega';
   const isWorkshopLocked = selectedTruckStatus === 'taller';
   const isConfigDisabled = isWorkshopLocked || selectedTruckStatus === 'transito';
+  const isLoadAdjustmentDisabled = isWorkshopLocked || selectedTruckStatus === 'transito' || activeSessionUser !== 'admin';
 
   const updateActiveTruckInventory = async (updatedProducts: Product[]) => {
     if (!truckPlates) return;
@@ -420,13 +432,19 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     });
   };
 
+  const getCartTotal = () => {
+    return Object.entries(cartQuantities).reduce((sum, [productId, qty]) => {
+      const prod = products.find(p => p.id === productId);
+      const discount = cartProductDiscounts[productId] || 0;
+      const finalPrice = Math.max(0, (prod ? prod.price : 0) - discount);
+      return sum + finalPrice * qty;
+    }, 0);
+  };
+
   const handleConfirmSale = async () => {
     if (!selectedCartClient) return;
 
-    const subtotal = Object.entries(cartQuantities).reduce((sum, [productId, qty]) => {
-      const prod = products.find(p => p.id === productId);
-      return sum + (prod ? prod.price * qty : 0);
-    }, 0);
+    const subtotal = getCartTotal();
 
     if (subtotal <= 0) {
       alert("El carrito está vacío. Agrega al menos un producto.");
@@ -457,7 +475,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
     const itemsSold = Object.entries(cartQuantities)
       .map(([prodId, qty]) => {
         const prod = products.find(p => p.id === prodId);
-        return prod ? `${qty}x ${prod.name} (${prod.unit})` : '';
+        const disc = cartProductDiscounts[prodId] || 0;
+        return prod ? `${qty}x ${prod.name} (${prod.unit})${disc > 0 ? ` [Desc: $${disc.toFixed(2)}/u]` : ''}` : '';
       })
       .filter(Boolean);
 
@@ -476,7 +495,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
         discount: discountAmount,
         driverName: driverName,
         truckPlates: truckPlates,
-        routeId: routeId
+        routeId: routeId,
+        lastFourDigits: (paymentMethod === 'card' || paymentMethod === 'transfer') ? lastFourDigits : null
       });
 
       // Decrement product truckStock locally
@@ -513,7 +533,9 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
       alert(`¡Venta registrada con éxito!\nTotal: $${finalTotal.toFixed(2)}`);
       
       setCartQuantities({});
+      setCartProductDiscounts({});
       setPaymentMethod('cash');
+      setLastFourDigits('');
       setProductSearchText('');
       setSelectedCartClient(null);
       setCartDiscount(0);
@@ -741,10 +763,144 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
 
       {activeTab === 'inventory' ? (
         <>
-          {/* TAB 1: Route & Truck Configuration Form */}
-          <IonRow>
-            <IonCol size="12">
-              <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
+          {activeSessionUser !== 'admin' && selectedTruckStatus !== 'transito' ? (
+            <IonRow>
+              <IonCol size="12">
+                <div className="glass-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', border: '1px solid var(--danger-color)', background: 'rgba(239, 68, 68, 0.05)', marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+                  <h3 style={{ fontWeight: 700, fontSize: '1.25rem', color: 'var(--danger-color)', margin: '0 0 0.5rem 0' }}>
+                    Sin Camioneta Activa en Ruta
+                  </h3>
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '0 auto 1.5rem auto', lineHeight: 1.5 }}>
+                    No tienes una camioneta asignada en tránsito para tu perfil (<strong>{activeSessionUser}</strong>). Solicita al administrador que registre tu salida y ponga tu camioneta en tránsito desde la oficina para poder realizar ventas.
+                  </p>
+                </div>
+              </IonCol>
+            </IonRow>
+          ) : (
+            <>
+              {/* Admin Transit Trucks List Section */}
+              {activeSessionUser === 'admin' && (
+                <IonRow>
+                  <IonCol size="12">
+                    <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                      <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: '0 0 0.85rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        🛣️ Camionetas en Ruta (En Tránsito)
+                      </h3>
+                      {(trucks || []).filter(t => t.status === 'transito').length === 0 ? (
+                        <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem', background: 'rgba(0,0,0,0.02)', borderRadius: '8px' }}>
+                          No hay camionetas en tránsito en este momento.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.75rem' }}>
+                          {(trucks || []).filter(t => t.status === 'transito').map(t => {
+                            const isActive = truckPlates === `${t.name} (Eco: ${t.ecoNumber})`;
+                            return (
+                              <div
+                                key={t.id}
+                                onClick={() => {
+                                  setDriverName(t.activeDriver || '');
+                                  setRouteId(t.activeRoute || '');
+                                  setTruckPlates(`${t.name} (Eco: ${t.ecoNumber})`);
+                                }}
+                                className="glass-card"
+                                style={{
+                                  padding: '0.85rem',
+                                  border: isActive ? '2px solid var(--primary-color)' : '1px solid var(--card-border)',
+                                  background: isActive ? 'rgba(59, 130, 246, 0.05)' : 'var(--card-bg)',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '0.35rem',
+                                  position: 'relative'
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-main)' }}>
+                                    🚚 {t.name} (Eco: {t.ecoNumber})
+                                  </span>
+                                  <span style={{
+                                    fontSize: '0.7rem',
+                                    fontWeight: 700,
+                                    color: 'white',
+                                    background: 'var(--accent-color)',
+                                    padding: '0.15rem 0.4rem',
+                                    borderRadius: '4px'
+                                  }}>
+                                    Ruta {t.activeRoute}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                  👤 Chofer: <strong>{t.activeDriver}</strong>
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                  💰 Vendido Hoy: <strong style={{ color: 'var(--primary-color)' }}>${(t.salesToday || 0).toFixed(2)}</strong>
+                                </div>
+                                
+                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDriverName(t.activeDriver || '');
+                                      setRouteId(t.activeRoute || '');
+                                      setTruckPlates(`${t.name} (Eco: ${t.ecoNumber})`);
+                                      setTimeout(() => {
+                                        handleOpenSaleModal();
+                                      }, 50);
+                                    }}
+                                    style={{
+                                      padding: '0.3rem 0.65rem',
+                                      fontSize: '0.75rem',
+                                      width: 'auto',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    🛒 Ventas
+                                  </button>
+                                  
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDriverName(t.activeDriver || '');
+                                      setRouteId(t.activeRoute || '');
+                                      setTruckPlates(`${t.name} (Eco: ${t.ecoNumber})`);
+                                      setTimeout(() => {
+                                        handleOpenRechargeModal();
+                                      }, 50);
+                                    }}
+                                    style={{
+                                      padding: '0.3rem 0.65rem',
+                                      fontSize: '0.75rem',
+                                      width: 'auto',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem',
+                                      color: 'var(--accent-color)'
+                                    }}
+                                  >
+                                    🔄 Recarga
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </IonCol>
+                </IonRow>
+              )}
+
+              {/* TAB 1: Route & Truck Configuration Form */}
+              <IonRow>
+                <IonCol size="12">
+                  <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     🚚 Configuración de Camioneta
@@ -959,7 +1115,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     type="button"
                     className="btn btn-secondary"
                     onClick={handleClearTruckStock}
-                    disabled={isWorkshopLocked}
+                    disabled={isLoadAdjustmentDisabled}
                     style={{ width: 'auto', padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--danger-color)' }}
                   >
                     🗑️ Vaciar Camioneta
@@ -1052,7 +1208,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, -10)}
                                   style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
                                   title="Quitar 10"
-                                  disabled={isWorkshopLocked}
+                                  disabled={isLoadAdjustmentDisabled}
                                 >
                                   -10
                                 </button>
@@ -1062,7 +1218,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, -1)}
                                   style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
                                   title="Quitar 1"
-                                  disabled={isWorkshopLocked}
+                                  disabled={isLoadAdjustmentDisabled}
                                 >
                                   ➖
                                 </button>
@@ -1081,7 +1237,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                     background: 'white',
                                     color: 'black'
                                   }}
-                                  disabled={isWorkshopLocked}
+                                  disabled={isLoadAdjustmentDisabled}
                                 />
 
                                 <button
@@ -1090,7 +1246,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, 1)}
                                   style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
                                   title="Añadir 1"
-                                  disabled={isWorkshopLocked}
+                                  disabled={isLoadAdjustmentDisabled}
                                 >
                                   ➕
                                 </button>
@@ -1100,7 +1256,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                   onClick={() => handleAdjustStock(prod, 10)}
                                   style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
                                   title="Añadir 10"
-                                  disabled={isWorkshopLocked}
+                                  disabled={isLoadAdjustmentDisabled}
                                 >
                                   +10
                                 </button>
@@ -1122,6 +1278,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
               </div>
             </IonCol>
           </IonRow>
+            </>
+          )}
         </>
       ) : (
         <>
@@ -1568,11 +1726,52 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                         })
                         .map(prod => {
                           const inCart = cartQuantities[prod.id] || 0;
+                          const discount = cartProductDiscounts[prod.id] || 0;
+                          const finalPrice = Math.max(0, prod.price - discount);
                           return (
                             <tr key={prod.id}>
                               <td>
-                                <div style={{ fontWeight: 600 }}>{prod.name}</div>
-                                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>SKU: #{prod.sku} • Price: ${prod.price.toFixed(2)}</div>
+                                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{prod.name}</div>
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                                  SKU: #{prod.sku} • Marca: {prod.brand || 'Genérico'} ({prod.unit})
+                                </div>
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                                  Precio: {discount > 0 ? (
+                                    <>
+                                      <span style={{ textDecoration: 'line-through', marginRight: '0.25rem' }}>${prod.price.toFixed(2)}</span>
+                                      <span style={{ fontWeight: 700, color: 'var(--primary-color)' }}>${finalPrice.toFixed(2)}</span>
+                                    </>
+                                  ) : (
+                                    <span>${prod.price.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.25rem' }}>
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Desc unitario ($):</span>
+                                  <input
+                                    type="number"
+                                    placeholder="0.00"
+                                    value={cartProductDiscounts[prod.id] || ''}
+                                    onChange={(e) => {
+                                      const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                      if (val > prod.price) {
+                                        alert("El descuento no puede ser mayor al precio del producto.");
+                                        return;
+                                      }
+                                      setCartProductDiscounts(prev => ({
+                                        ...prev,
+                                        [prod.id]: val
+                                      }));
+                                    }}
+                                    style={{
+                                      width: '60px',
+                                      fontSize: '0.75rem',
+                                      padding: '0.1rem 0.25rem',
+                                      border: '1px solid var(--card-border)',
+                                      borderRadius: '4px',
+                                      textAlign: 'right'
+                                    }}
+                                  />
+                                </div>
                               </td>
                               <td style={{ textAlign: 'center', fontWeight: 600 }}>{prod.truckStock}</td>
                               <td style={{ textAlign: 'center' }}>
@@ -1615,7 +1814,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
                     <span>Subtotal:</span>
                     <span style={{ fontWeight: 700 }}>
-                      ${Object.entries(cartQuantities).reduce((sum, [pId, q]) => sum + ((products.find(p => p.id === pId)?.price || 0) * q), 0).toFixed(2)}
+                      ${getCartTotal().toFixed(2)}
                     </span>
                   </div>
 
@@ -1632,7 +1831,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', fontWeight: 800, borderTop: '1px solid var(--card-border)', paddingTop: '0.5rem', marginBottom: '0.75rem', color: 'var(--primary-color)' }}>
                     <span>Total a Cobrar:</span>
                     <span>
-                      ${Math.max(0, Object.entries(cartQuantities).reduce((sum, [pId, q]) => sum + ((products.find(p => p.id === pId)?.price || 0) * q), 0) - cartDiscount).toFixed(2)}
+                      ${Math.max(0, getCartTotal() - cartDiscount).toFixed(2)}
                     </span>
                   </div>
 
@@ -1650,10 +1849,36 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     </select>
                   </div>
 
+                  {(paymentMethod === 'card' || paymentMethod === 'transfer') && (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.25rem', color: 'var(--text-secondary)' }}>
+                        Últimos 4 dígitos ({paymentMethod === 'card' ? 'Tarjeta' : 'Transferencia'}) *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ej. 1234"
+                        maxLength={4}
+                        value={lastFourDigits}
+                        onChange={(e) => setLastFourDigits(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                        style={{
+                          width: '100%',
+                          fontSize: '0.8rem',
+                          padding: '0.35rem',
+                          border: '1px solid var(--card-border)',
+                          borderRadius: '4px',
+                          background: 'white',
+                          color: 'black'
+                        }}
+                        required
+                      />
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     className="btn btn-primary"
                     onClick={handleConfirmSale}
+                    disabled={getCartTotal() <= 0 || ((paymentMethod === 'card' || paymentMethod === 'transfer') && lastFourDigits.length !== 4)}
                     style={{ width: '100%', padding: '0.6rem', fontWeight: 700 }}
                   >
                     Confirmar Venta 💵

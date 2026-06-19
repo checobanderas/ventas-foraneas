@@ -69,6 +69,72 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const [cartDiscount, setCartDiscount] = useState<number>(0);
   const saleMode = 'warehouse' as 'truck' | 'warehouse';
 
+  const [cartProductDiscounts, setCartProductDiscounts] = useState<{ [productId: string]: number }>({});
+  const [lastFourDigits, setLastFourDigits] = useState<string>('');
+  
+  // Statement Modal States
+  const [isStatementModalOpen, setIsStatementModalOpen] = useState(false);
+  const [selectedStatementClient, setSelectedStatementClient] = useState<Client | null>(null);
+  
+  // Statement Abono Form States
+  const [showStatementAbonoForm, setShowStatementAbonoForm] = useState(false);
+  const [abonoAmount, setAbonoAmount] = useState<number | null>(null);
+  const [abonoMethod, setAbonoMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
+  const [abonoLastFourDigits, setAbonoLastFourDigits] = useState<string>('');
+  const [abonoNotes, setAbonoNotes] = useState<string>('');
+
+  const handleOpenStatementModal = (client: Client) => {
+    setSelectedStatementClient(client);
+    setShowStatementAbonoForm(false);
+    setAbonoAmount(null);
+    setAbonoMethod('cash');
+    setAbonoLastFourDigits('');
+    setAbonoNotes('');
+    setIsStatementModalOpen(true);
+  };
+
+  const handleSaveStatementAbono = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedStatementClient || !abonoAmount || abonoAmount <= 0) return;
+
+    try {
+      const paymentId = `pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const activeDriver = localStorage.getItem('active_driver_name');
+      const activeTruck = localStorage.getItem('active_truck_plates');
+      const activeRoute = localStorage.getItem('active_route_id');
+
+      await syncService.addPayment({
+        id: paymentId,
+        clientId: selectedStatementClient.id,
+        clientName: selectedStatementClient.name,
+        amount: -Number(abonoAmount),
+        date: new Date().toISOString().split('T')[0],
+        paymentMethod: abonoMethod,
+        status: 'completed',
+        notes: abonoNotes.trim() || `Abono/Cobro registrado: ${abonoMethod === 'cash' ? 'Efectivo' : abonoMethod === 'card' ? 'Tarjeta' : 'Transferencia'}`,
+        subtotal: -Number(abonoAmount),
+        discount: 0,
+        driverName: activeDriver || null,
+        truckPlates: activeTruck || null,
+        routeId: activeRoute || null,
+        lastFourDigits: (abonoMethod === 'card' || abonoMethod === 'transfer') ? abonoLastFourDigits : null
+      });
+
+      alert(`¡Abono registrado con éxito!\nMonto: $${Number(abonoAmount).toFixed(2)}`);
+      
+      setShowStatementAbonoForm(false);
+      setAbonoAmount(null);
+      setAbonoLastFourDigits('');
+      setAbonoNotes('');
+      
+      await loadPayments();
+      onClientsUpdated();
+    } catch (err) {
+      console.error("Error saving statement abono:", err);
+      alert("Error al registrar el abono.");
+    }
+  };
+
   const loadPayments = async () => {
     try {
       const pmts = await getLocalPayments();
@@ -320,7 +386,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
       prod.sku.toLowerCase().includes(term);
 
     // 3. Filter by category tab
-    const matchesCategory = !selectedCartCategory || prod.brand === selectedCartCategory;
+    const matchesCategory = selectedCartCategory === '' || prod.brand === selectedCartCategory;
 
     return matchesSearch && matchesCategory;
   });
@@ -328,7 +394,9 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
   const getCartTotal = () => {
     return Object.entries(cartQuantities).reduce((sum, [productId, qty]) => {
       const prod = localProducts.find(p => p.id === productId);
-      return sum + (prod ? prod.price * qty : 0);
+      const discount = cartProductDiscounts[productId] || 0;
+      const finalPrice = Math.max(0, (prod ? prod.price : 0) - discount);
+      return sum + finalPrice * qty;
     }, 0);
   };
 
@@ -387,7 +455,8 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
     const itemsSold = Object.entries(cartQuantities)
       .map(([prodId, qty]) => {
         const prod = localProducts.find(p => p.id === prodId);
-        return prod ? `${qty}x ${prod.name} (${prod.unit})` : '';
+        const disc = cartProductDiscounts[prodId] || 0;
+        return prod ? `${qty}x ${prod.name} (${prod.unit})${disc > 0 ? ` [Desc: $${disc.toFixed(2)}/u]` : ''}` : '';
       })
       .filter(Boolean);
 
@@ -410,7 +479,8 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
         discount: discountAmount,
         driverName: saleMode === 'truck' ? activeDriver : null,
         truckPlates: saleMode === 'truck' ? activeTruck : null,
-        routeId: saleMode === 'truck' ? activeRoute : null
+        routeId: saleMode === 'truck' ? activeRoute : null,
+        lastFourDigits: (paymentMethod === 'card' || paymentMethod === 'transfer') ? lastFourDigits : null
       });
 
       // Deduct quantity sold from truck local inventory or master warehouse stock
@@ -459,7 +529,9 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
       alert(`¡Venta registrada con éxito!\nTotal: $${finalTotal.toFixed(2)}`);
       
       setCartQuantities({});
+      setCartProductDiscounts({});
       setPaymentMethod('cash');
+      setLastFourDigits('');
       setProductSearchText('');
       setSelectedCartCategory('');
       setActiveCartClient(null);
@@ -490,6 +562,8 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                     className="btn btn-secondary"
                     onClick={() => {
                       setCartQuantities({});
+                      setCartProductDiscounts({});
+                      setLastFourDigits('');
                       setActiveCartClient(null);
                     }}
                     style={{ width: 'auto', padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
@@ -641,9 +715,49 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                                 {saleMode === 'warehouse' ? `Stock Bodega: ${prod.stock}` : `En Camioneta: ${prod.truckStock}`}
                               </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.25rem' }}>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Desc unitario ($):</span>
+                                <input
+                                  type="number"
+                                  placeholder="0.00"
+                                  value={cartProductDiscounts[prod.id] || ''}
+                                  onChange={(e) => {
+                                    const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                    if (val > prod.price) {
+                                      alert("El descuento no puede ser mayor al precio del producto.");
+                                      return;
+                                    }
+                                    setCartProductDiscounts(prev => ({
+                                      ...prev,
+                                      [prod.id]: val
+                                    }));
+                                  }}
+                                  style={{
+                                    width: '60px',
+                                    fontSize: '0.75rem',
+                                    padding: '0.1rem 0.25rem',
+                                    border: '1px solid var(--card-border)',
+                                    borderRadius: '4px',
+                                    textAlign: 'right'
+                                  }}
+                                />
+                              </div>
                             </td>
-                            <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.85rem' }}>
-                              ${prod.price.toFixed(2)}
+                            <td style={{ textAlign: 'right', fontSize: '0.85rem' }}>
+                              {(cartProductDiscounts[prod.id] || 0) > 0 ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                  <span style={{ textDecoration: 'line-through', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                    ${prod.price.toFixed(2)}
+                                  </span>
+                                  <span style={{ fontWeight: 700, color: 'var(--primary-color)' }}>
+                                    ${Math.max(0, prod.price - (cartProductDiscounts[prod.id] || 0)).toFixed(2)}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>
+                                  ${prod.price.toFixed(2)}
+                                </span>
+                              )}
                             </td>
                             <td style={{ textAlign: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
@@ -751,12 +865,32 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                   </div>
                 </div>
 
+                {(paymentMethod === 'card' || paymentMethod === 'transfer') && (
+                  <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                    <label className="form-label" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                      Últimos 4 dígitos ({paymentMethod === 'card' ? 'Tarjeta' : 'Transferencia'}) *
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ej. 1234"
+                      maxLength={4}
+                      value={lastFourDigits}
+                      onChange={(e) => setLastFourDigits(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                      required
+                    />
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
                   <button
                     type="button"
                     className="btn btn-secondary"
                     onClick={() => {
                       setCartQuantities({});
+                      setCartProductDiscounts({});
+                      setLastFourDigits('');
                       setActiveCartClient(null);
                     }}
                     style={{ flex: 1 }}
@@ -767,7 +901,7 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                     type="button"
                     className="btn btn-primary"
                     onClick={handleConfirmSale}
-                    disabled={getCartTotal() <= 0}
+                    disabled={getCartTotal() <= 0 || ((paymentMethod === 'card' || paymentMethod === 'transfer') && lastFourDigits.length !== 4)}
                     style={{ flex: 2 }}
                   >
                     Confirmar Venta 🛒
@@ -1055,6 +1189,15 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                                 <button
                                   type="button"
                                   className="emoji-action-btn"
+                                  onClick={() => handleOpenStatementModal(client)}
+                                  title="Estado de Cuenta"
+                                  style={{ padding: '0.15rem' }}
+                                >
+                                  📄
+                                </button>
+                                <button
+                                  type="button"
+                                  className="emoji-action-btn"
                                   onClick={() => openEditModal(client)}
                                   title="Editar"
                                   style={{ padding: '0.15rem' }}
@@ -1147,6 +1290,15 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                           style={{ background: 'transparent', border: 'none' }}
                         >
                           🛒
+                        </button>
+                        <button
+                          type="button"
+                          className="emoji-action-btn"
+                          onClick={() => handleOpenStatementModal(client)}
+                          title="Estado de Cuenta"
+                          style={{ background: 'transparent', border: 'none' }}
+                        >
+                          📄
                         </button>
                         <a
                           href={hasPhone ? `https://wa.me/${cleanPhone(client.phone)}` : '#'}
@@ -1348,6 +1500,225 @@ export const ClientModule: React.FC<ClientModuleProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </IonContent>
+      </IonModal>
+
+      {/* ================= MODAL ESTADO DE CUENTA ================= */}
+      <IonModal isOpen={isStatementModalOpen} onDidDismiss={() => setIsStatementModalOpen(false)}>
+        <IonHeader>
+          <IonToolbar style={{ '--background': 'hsla(224, 71%, 6%, 0.9)', '--border-color': 'var(--card-border)' }}>
+            <IonTitle style={{ fontSize: '1.05rem', fontWeight: 700 }}>
+              📄 Estado de Cuenta: {selectedStatementClient?.name}
+            </IonTitle>
+            <IonButtons slot="end">
+              <IonButton onClick={() => setIsStatementModalOpen(false)} style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Cerrar
+              </IonButton>
+            </IonButtons>
+          </IonToolbar>
+        </IonHeader>
+
+        <IonContent style={{ '--background': 'var(--bg-color)', '--padding-bottom': '2rem' }}>
+          <div style={{ padding: '1.25rem' }}>
+            {selectedStatementClient && (
+              <>
+                {/* Ledger Table */}
+                <div className="glass-card" style={{ padding: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <h4 style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-main)', margin: 0 }}>
+                      📋 Historial de Transacciones
+                    </h4>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary-color)' }}>
+                      Saldo Actual: ${(
+                        (selectedStatementClient.initialBalance || 0) +
+                        localPayments.filter(p => p.clientId === selectedStatementClient.id).reduce((s, p) => s + p.amount, 0)
+                      ).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className="table-responsive" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                    <table className="client-table" style={{ fontSize: '0.75rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Detalle</th>
+                          <th style={{ textAlign: 'right' }}>Cargo</th>
+                          <th style={{ textAlign: 'right' }}>Abono</th>
+                          <th style={{ textAlign: 'right' }}>Saldo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* 1. Saldo Inicial Row */}
+                        <tr>
+                          <td>{selectedStatementClient.initialBalanceDate || selectedStatementClient.createdAt.split('T')[0]}</td>
+                          <td style={{ fontWeight: 600 }}>Saldo Inicial</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-main)' }}>
+                            {(selectedStatementClient.initialBalance || 0) >= 0 ? `$${(selectedStatementClient.initialBalance || 0).toFixed(2)}` : '--'}
+                          </td>
+                          <td style={{ textAlign: 'right', color: 'var(--accent-color)' }}>
+                            {(selectedStatementClient.initialBalance || 0) < 0 ? `$${(-(selectedStatementClient.initialBalance || 0)).toFixed(2)}` : '--'}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>
+                            ${(selectedStatementClient.initialBalance || 0).toFixed(2)}
+                          </td>
+                        </tr>
+
+                        {/* 2. Subsequent Payment/Sale Rows */}
+                        {(() => {
+                          let runningBalance = selectedStatementClient.initialBalance || 0;
+                          return localPayments
+                            .filter(p => p.clientId === selectedStatementClient.id)
+                            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() || a.createdAt.localeCompare(b.createdAt))
+                            .map((p) => {
+                              const cargo = p.amount > 0 ? p.amount : 0;
+                              const abono = p.amount < 0 ? -p.amount : 0;
+                              runningBalance += p.amount;
+
+                              const methodLabel = p.paymentMethod === 'cash' ? 'Efectivo' : p.paymentMethod === 'card' ? 'Tarjeta' : 'Transferencia';
+                              const refDigits = p.lastFourDigits ? ` (Ref: *${p.lastFourDigits})` : '';
+
+                              return (
+                                <tr key={p.id}>
+                                  <td>{p.date}</td>
+                                  <td>
+                                    <div style={{ fontWeight: 500 }}>{p.notes || (p.amount > 0 ? 'Venta' : 'Abono')}</div>
+                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
+                                      {methodLabel}{refDigits} {p.driverName ? `• Chofer: ${p.driverName}` : ''}
+                                    </div>
+                                  </td>
+                                  <td style={{ textAlign: 'right', color: 'var(--text-main)' }}>
+                                    {cargo > 0 ? `$${cargo.toFixed(2)}` : '--'}
+                                  </td>
+                                  <td style={{ textAlign: 'right', color: 'var(--accent-color)', fontWeight: 600 }}>
+                                    {abono > 0 ? `$${abono.toFixed(2)}` : '--'}
+                                  </td>
+                                  <td style={{ textAlign: 'right', fontWeight: 700 }}>
+                                    ${runningBalance.toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Abono/Pago Form Trigger */}
+                {!showStatementAbonoForm ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShowStatementAbonoForm(true)}
+                    style={{ width: '100%', padding: '0.65rem', fontWeight: 700 }}
+                  >
+                    💵 Registrar Cobro / Abono
+                  </button>
+                ) : (
+                  <div className="glass-card" style={{ padding: '1.25rem', border: '1px solid var(--primary-color)', background: 'white' }}>
+                    <h4 style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--primary-color)', margin: '0 0 1rem 0' }}>
+                      💵 Registrar Nuevo Abono
+                    </h4>
+                    <form onSubmit={handleSaveStatementAbono}>
+                      <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>Monto del Pago ($) *</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          placeholder="Ej. 500"
+                          value={abonoAmount !== null ? abonoAmount : ''}
+                          onChange={(e) => setAbonoAmount(e.target.value !== '' ? Number(e.target.value) : null)}
+                          style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                          required
+                          min={0.01}
+                          step={0.01}
+                        />
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem', color: 'var(--text-main)', marginBottom: '0.25rem' }}>Método de Pago *</label>
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button
+                            type="button"
+                            className={`btn ${abonoMethod === 'cash' ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setAbonoMethod('cash')}
+                            style={{ flex: 1, padding: '0.35rem', fontSize: '0.75rem' }}
+                          >
+                            Efectivo
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn ${abonoMethod === 'card' ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setAbonoMethod('card')}
+                            style={{ flex: 1, padding: '0.35rem', fontSize: '0.75rem' }}
+                          >
+                            Tarjeta
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn ${abonoMethod === 'transfer' ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setAbonoMethod('transfer')}
+                            style={{ flex: 1, padding: '0.35rem', fontSize: '0.75rem' }}
+                          >
+                            Transf.
+                          </button>
+                        </div>
+                      </div>
+
+                      {(abonoMethod === 'card' || abonoMethod === 'transfer') && (
+                        <div className="form-group" style={{ marginBottom: '0.85rem' }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                            Últimos 4 dígitos ({abonoMethod === 'card' ? 'Tarjeta' : 'Transferencia'}) *
+                          </label>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Ej. 5678"
+                            maxLength={4}
+                            value={abonoLastFourDigits}
+                            onChange={(e) => setAbonoLastFourDigits(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                            required
+                          />
+                        </div>
+                      )}
+
+                      <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem', color: 'var(--text-main)' }}>Notas / Referencia</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Ej. Pago parcial"
+                          value={abonoNotes}
+                          onChange={(e) => setAbonoNotes(e.target.value)}
+                          style={{ fontSize: '0.85rem', padding: '0.45rem', width: '100%', border: '1px solid var(--card-border)', borderRadius: '6px' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => setShowStatementAbonoForm(false)}
+                          style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={!abonoAmount || abonoAmount <= 0 || ((abonoMethod === 'card' || abonoMethod === 'transfer') && abonoLastFourDigits.length !== 4)}
+                          style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
+                        >
+                          Guardar Pago 💾
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </IonContent>
       </IonModal>

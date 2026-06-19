@@ -80,6 +80,7 @@ export interface Payment {
   driverName?: string | null;
   truckPlates?: string | null;
   routeId?: string | null;
+  lastFourDigits?: string | null;
 }
 
 export interface TruckCut {

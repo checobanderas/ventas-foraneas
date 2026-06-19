@@ -30,6 +30,9 @@ export const App: React.FC = () => {
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users' | 'logistics'>('clients');
+  const [activeSessionUser, setActiveSessionUser] = useState<string>(() => {
+    return localStorage.getItem('active_session_user') || 'admin';
+  });
   
   // Connection and Sync states
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -175,6 +178,37 @@ export const App: React.FC = () => {
     await syncService.sync();
   };
 
+  const handleSessionUserChange = (userName: string) => {
+    setActiveSessionUser(userName);
+    localStorage.setItem('active_session_user', userName);
+
+    if (userName === 'admin') {
+      localStorage.removeItem('active_driver_name');
+      localStorage.removeItem('active_truck_plates');
+      localStorage.removeItem('active_route_id');
+    } else {
+      const userObj = users.find(u => u.name === userName);
+      if (userObj && userObj.role === 'driver') {
+        localStorage.setItem('active_driver_name', userObj.name);
+        
+        // Find if they have an active transit truck
+        const activeTruckObj = trucks.find(t => t.activeDriver === userObj.name && t.status === 'transito');
+        if (activeTruckObj) {
+          localStorage.setItem('active_truck_plates', `${activeTruckObj.name} (Eco: ${activeTruckObj.ecoNumber})`);
+          localStorage.setItem('active_route_id', activeTruckObj.activeRoute || '');
+        } else {
+          localStorage.removeItem('active_truck_plates');
+          localStorage.removeItem('active_route_id');
+        }
+      } else {
+        localStorage.removeItem('active_driver_name');
+        localStorage.removeItem('active_truck_plates');
+        localStorage.removeItem('active_route_id');
+      }
+    }
+    loadLocalData();
+  };
+
   return (
     <IonApp>
       <IonSplitPane contentId="main-content">
@@ -210,23 +244,25 @@ export const App: React.FC = () => {
                   <IonLabel>Catálogo de Clientes</IonLabel>
                 </IonItem>
 
-                <IonItem 
-                  button 
-                  onClick={() => setCurrentView('products')} 
-                  style={{
-                    '--background': currentView === 'products' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
-                    '--color': currentView === 'products' ? 'var(--primary-color)' : 'var(--text-main)',
-                    '--border-radius': '8px',
-                    '--margin-bottom': '0.5rem',
-                    'fontWeight': 700,
-                    'fontSize': '0.9rem',
-                    'cursor': 'pointer'
-                  }}
-                  lines="none"
-                >
-                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>📦</span>
-                  <IonLabel>Catálogo de Productos</IonLabel>
-                </IonItem>
+                {activeSessionUser === 'admin' && (
+                  <IonItem 
+                    button 
+                    onClick={() => setCurrentView('products')} 
+                    style={{
+                      '--background': currentView === 'products' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                      '--color': currentView === 'products' ? 'var(--primary-color)' : 'var(--text-main)',
+                      '--border-radius': '8px',
+                      '--margin-bottom': '0.5rem',
+                      'fontWeight': 700,
+                      'fontSize': '0.9rem',
+                      'cursor': 'pointer'
+                    }}
+                    lines="none"
+                  >
+                    <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>📦</span>
+                    <IonLabel>Catálogo de Productos</IonLabel>
+                  </IonItem>
+                )}
 
                 <IonItem 
                   button 
@@ -246,41 +282,45 @@ export const App: React.FC = () => {
                   <IonLabel>Mi Camioneta</IonLabel>
                 </IonItem>
 
-                <IonItem 
-                  button 
-                  onClick={() => setCurrentView('users')} 
-                  style={{
-                    '--background': currentView === 'users' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
-                    '--color': currentView === 'users' ? 'var(--primary-color)' : 'var(--text-main)',
-                    '--border-radius': '8px',
-                    '--margin-bottom': '0.5rem',
-                    'fontWeight': 700,
-                    'fontSize': '0.9rem',
-                    'cursor': 'pointer'
-                  }}
-                  lines="none"
-                >
-                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>👤</span>
-                  <IonLabel>Catálogo de Usuarios</IonLabel>
-                </IonItem>
+                {activeSessionUser === 'admin' && (
+                  <IonItem 
+                    button 
+                    onClick={() => setCurrentView('users')} 
+                    style={{
+                      '--background': currentView === 'users' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                      '--color': currentView === 'users' ? 'var(--primary-color)' : 'var(--text-main)',
+                      '--border-radius': '8px',
+                      '--margin-bottom': '0.5rem',
+                      'fontWeight': 700,
+                      'fontSize': '0.9rem',
+                      'cursor': 'pointer'
+                    }}
+                    lines="none"
+                  >
+                    <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>👤</span>
+                    <IonLabel>Catálogo de Usuarios</IonLabel>
+                  </IonItem>
+                )}
 
-                <IonItem 
-                  button 
-                  onClick={() => setCurrentView('logistics')} 
-                  style={{
-                    '--background': currentView === 'logistics' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
-                    '--color': currentView === 'logistics' ? 'var(--primary-color)' : 'var(--text-main)',
-                    '--border-radius': '8px',
-                    '--margin-bottom': '0.5rem',
-                    'fontWeight': 700,
-                    'fontSize': '0.9rem',
-                    'cursor': 'pointer'
-                  }}
-                  lines="none"
-                >
-                  <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚚</span>
-                  <IonLabel>Logística de Flota</IonLabel>
-                </IonItem>
+                {activeSessionUser === 'admin' && (
+                  <IonItem 
+                    button 
+                    onClick={() => setCurrentView('logistics')} 
+                    style={{
+                      '--background': currentView === 'logistics' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                      '--color': currentView === 'logistics' ? 'var(--primary-color)' : 'var(--text-main)',
+                      '--border-radius': '8px',
+                      '--margin-bottom': '0.5rem',
+                      'fontWeight': 700,
+                      'fontSize': '0.9rem',
+                      'cursor': 'pointer'
+                    }}
+                    lines="none"
+                  >
+                    <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚚</span>
+                    <IonLabel>Logística de Flota</IonLabel>
+                  </IonItem>
+                )}
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -303,7 +343,34 @@ export const App: React.FC = () => {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* User Session Selector */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span style={{ fontSize: '0.85rem' }}>👤</span>
+                  <select
+                    value={activeSessionUser}
+                    onChange={(e) => handleSessionUserChange(e.target.value)}
+                    style={{
+                      padding: '0.35rem 0.5rem',
+                      fontSize: '0.75rem',
+                      border: '1px solid var(--card-border)',
+                      borderRadius: '6px',
+                      background: 'rgba(255, 255, 255, 0.75)',
+                      color: 'var(--text-main)',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      fontWeight: 600
+                    }}
+                  >
+                    <option value="admin">Dueño / Administrador</option>
+                    {users.map(u => (
+                      <option key={u.id} value={u.name}>
+                        {u.name} ({u.role === 'driver' ? 'Vendedor' : u.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className={`status-badge ${isOnline ? 'online' : 'offline'}`} style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>
                   <div className="status-dot"></div>
                   <span>{isOnline ? 'En Línea' : 'Fuera'}</span>
@@ -433,13 +500,14 @@ export const App: React.FC = () => {
                    onTrucksUpdated={loadLocalData}
                  />
                ) : (
-                  <TruckModule 
-                    onInventoryUpdated={loadLocalData}
-                    products={products}
-                    users={users}
-                    trucks={trucks}
-                    clients={clients}
-                  />
+                   <TruckModule 
+                     onInventoryUpdated={loadLocalData}
+                     products={products}
+                     users={users}
+                     trucks={trucks}
+                     clients={clients}
+                     activeSessionUser={activeSessionUser}
+                   />
                )}
 
               {/* Sync Panel & Logs */}
