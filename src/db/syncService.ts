@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { collection, doc, setDoc, deleteDoc, getDocs, query, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import {
   initDB,
   addToSyncQueue,
@@ -558,8 +558,8 @@ class SyncService {
         }
       }
 
-      // 2. Pull down fresh clients from Firestore (limit to 50)
-      const clientsSnapshot = await getDocs(query(collection(db, 'clients'), limit(50)));
+      // 2. Pull down fresh clients from Firestore
+      const clientsSnapshot = await getDocs(collection(db, 'clients'));
       const activeLocalClients = await ldb.getAll('clients');
 
 
