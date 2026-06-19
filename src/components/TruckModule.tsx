@@ -11,14 +11,13 @@ import {
   IonButton,
   IonContent
 } from '@ionic/react';
-import type { Product, User, Truck, Payment, Client } from '../db/indexedDB';
+import type { Product, Truck, Payment, Client } from '../db/indexedDB';
 import { saveLocalProduct, getLocalPayments } from '../db/indexedDB';
 import { syncService } from '../db/syncService';
 
 interface TruckModuleProps {
   onInventoryUpdated: () => void;
   products: Product[];
-  users?: User[];
   trucks?: Truck[];
   clients?: Client[];
   activeSessionUser?: string;
@@ -27,7 +26,6 @@ interface TruckModuleProps {
 export const TruckModule: React.FC<TruckModuleProps> = ({
   onInventoryUpdated,
   products,
-  users = [],
   trucks = [],
   clients = [],
   activeSessionUser = 'admin'
@@ -199,195 +197,8 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
   const uniqueBrands = Array.from(
     new Set(products.map(p => p.brand).filter(Boolean))
   ).sort() as string[];
-
   const selectedTruckObj = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
   const selectedTruckStatus = selectedTruckObj?.status || 'bodega';
-  const isWorkshopLocked = selectedTruckStatus === 'taller';
-  const isConfigDisabled = isWorkshopLocked || selectedTruckStatus === 'transito';
-  const isLoadAdjustmentDisabled = isWorkshopLocked || selectedTruckStatus === 'transito' || activeSessionUser !== 'admin';
-
-  const updateActiveTruckInventory = async (updatedProducts: Product[]) => {
-    if (!truckPlates) return;
-    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
-    if (matchedTruck) {
-      const inventory: { [productId: string]: number } = {};
-      updatedProducts.forEach(p => {
-        if (p.truckStock && p.truckStock > 0) {
-          inventory[p.id] = p.truckStock;
-        }
-      });
-      await syncService.updateTruck({
-        ...matchedTruck,
-        inventory
-      });
-    }
-  };
-
-  // Save config changes to localStorage
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!driverName || !truckPlates || !routeId) {
-      alert("Por favor selecciona chofer, ruta y placas.");
-      return;
-    }
-
-    localStorage.setItem('active_route_id', routeId);
-    localStorage.setItem('active_truck_plates', truckPlates);
-    localStorage.setItem('active_driver_name', driverName);
-    
-    // Sync status and details of active truck to 'esperando_salida'
-    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
-    if (matchedTruck) {
-      const inventory: { [productId: string]: number } = {};
-      products.forEach(p => {
-        if (p.truckStock && p.truckStock > 0) {
-          inventory[p.id] = p.truckStock;
-        }
-      });
-      await syncService.updateTruck({
-        ...matchedTruck,
-        status: 'esperando_salida',
-        activeDriver: driverName || null,
-        activeRoute: routeId || null,
-        inventory,
-        salesToday: matchedTruck.salesToday !== undefined ? matchedTruck.salesToday : 0
-      });
-    }
-    
-    alert('Configuración de la camioneta guardada. La unidad está lista en bodega esperando carga e inventario para dar el banderazo de salida.');
-    onInventoryUpdated();
-  };
-
-  // Dispatch Unit (Banderazo de Salida)
-  const handleBanderazoSalida = async () => {
-    if (!driverName || !truckPlates || !routeId) {
-      alert("Por favor configura el chofer, ruta y placas de la unidad antes de dar la salida.");
-      return;
-    }
-
-    // Validate that truck inventory is loaded and greater than zero
-    const totalLoadedItems = products.reduce((sum, p) => sum + (p.truckStock || 0), 0);
-    if (totalLoadedItems === 0) {
-      alert("⚠️ No se puede dar salida a la camioneta con inventario vacío. Carga mercancía en la camioneta antes de partir.");
-      return;
-    }
-
-    const matchedTruck = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === truckPlates);
-    if (matchedTruck) {
-      const inventory: { [productId: string]: number } = {};
-      products.forEach(p => {
-        if (p.truckStock && p.truckStock > 0) {
-          inventory[p.id] = p.truckStock;
-        }
-      });
-
-      await syncService.updateTruck({
-        ...matchedTruck,
-        status: 'transito',
-        activeDriver: driverName,
-        activeRoute: routeId,
-        inventory,
-        salesToday: 0,
-        initialLoaded: inventory,
-        recharges: {}
-      });
-
-      // Confirm settings in localStorage
-      localStorage.setItem('active_route_id', routeId);
-      localStorage.setItem('active_truck_plates', truckPlates);
-      localStorage.setItem('active_driver_name', driverName);
-
-      alert("🚀 ¡Banderazo de salida exitoso! La camioneta ha sido puesta en tránsito y está lista para vender.");
-      onInventoryUpdated();
-    } else {
-      alert("Error: No se encontró la unidad seleccionada.");
-    }
-  };
-
-  // Populate driver and route state when unit plates dropdown changes
-  const handleTruckPlatesChange = (plates: string) => {
-    setTruckPlates(plates);
-    const matched = trucks.find(t => `${t.name} (Eco: ${t.ecoNumber})` === plates);
-    if (matched) {
-      setDriverName(matched.activeDriver || '');
-      setRouteId(matched.activeRoute || '');
-    } else {
-      setDriverName('');
-      setRouteId('');
-    }
-  };
-
-  // Adjust Truck Stock & Loaded stock
-  const handleAdjustStock = async (prod: Product, quantity: number) => {
-    const currentStock = prod.truckStock || 0;
-    const nextStock = Math.max(0, currentStock + quantity);
-    
-    const loadedDiff = nextStock - currentStock;
-    const currentLoaded = prod.truckStockLoaded || 0;
-    const nextLoaded = loadedDiff > 0 ? currentLoaded + loadedDiff : currentLoaded;
-
-    const updated = {
-      ...prod,
-      truckStock: nextStock,
-      truckStockLoaded: nextLoaded
-    };
-    
-    await saveLocalProduct(updated);
-    
-    // Update synced truck
-    const updatedProducts = products.map(p => p.id === prod.id ? updated : p);
-    await updateActiveTruckInventory(updatedProducts);
-
-    onInventoryUpdated();
-  };
-
-  const handleDirectStockChange = async (prod: Product, val: string) => {
-    const nextStock = val === '' ? 0 : Math.max(0, parseInt(val, 10));
-    if (isNaN(nextStock)) return;
-
-    const currentStock = prod.truckStock || 0;
-    const loadedDiff = nextStock - currentStock;
-    const currentLoaded = prod.truckStockLoaded || 0;
-    const nextLoaded = loadedDiff > 0 ? currentLoaded + loadedDiff : currentLoaded;
-
-    const updated = {
-      ...prod,
-      truckStock: nextStock,
-      truckStockLoaded: nextLoaded
-    };
-    
-    await saveLocalProduct(updated);
-    
-    // Update synced truck
-    const updatedProducts = products.map(p => p.id === prod.id ? updated : p);
-    await updateActiveTruckInventory(updatedProducts);
-
-    onInventoryUpdated();
-  };
-
-  // Quick reset all truck stock to 0
-  const handleClearTruckStock = async () => {
-    if (confirm('¿Estás seguro de vaciar todo el inventario de la camioneta?')) {
-      const updatedProducts: Product[] = [];
-      for (const prod of products) {
-        if ((prod.truckStock && prod.truckStock > 0) || (prod.truckStockLoaded && prod.truckStockLoaded > 0)) {
-          const updated = {
-            ...prod,
-            truckStock: 0,
-            truckStockLoaded: 0
-          };
-          await saveLocalProduct(updated);
-          updatedProducts.push(updated);
-        } else {
-          updatedProducts.push(prod);
-        }
-      }
-      await updateActiveTruckInventory(updatedProducts);
-      onInventoryUpdated();
-      alert('Inventario de la camioneta vaciado.');
-    }
-  };
-
   const handleOpenSaleModal = () => {
     setSelectedCartClient(null);
     setCartQuantities({});
@@ -897,387 +708,228 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                 </IonRow>
               )}
 
-              {/* TAB 1: Route & Truck Configuration Form */}
-              <IonRow>
-                <IonCol size="12">
-                  <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    🚚 Configuración de Camioneta
-                  </h3>
-                  {truckPlates && (
-                    <span style={{
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      color: selectedTruckStatus === 'transito' ? 'var(--accent-color)' : selectedTruckStatus === 'esperando_salida' ? 'var(--secondary-color)' : selectedTruckStatus === 'taller' ? 'var(--danger-color)' : 'var(--text-secondary)',
-                      background: selectedTruckStatus === 'transito' ? 'rgba(16, 185, 129, 0.15)' : selectedTruckStatus === 'esperando_salida' ? 'rgba(59, 130, 246, 0.15)' : selectedTruckStatus === 'taller' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(0,0,0,0.05)',
-                      padding: '0.25rem 0.6rem',
-                      borderRadius: '6px'
-                    }}>
-                      {selectedTruckStatus === 'transito' ? '🛣️ En Tránsito' : selectedTruckStatus === 'esperando_salida' ? '⏳ Esperando Salida' : selectedTruckStatus === 'taller' ? '🔧 En Taller (Bloqueada)' : '🏭 Parada en Bodega'}
-                    </span>
-                  )}
-                </div>
+              {/* TAB 1: Carga & Inventario (Driver/Admin view of active transit truck) */}
+              {selectedTruckStatus === 'transito' ? (
+                <>
+                  <IonRow>
+                    <IonCol size="12">
+                      <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1rem', background: 'white' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                          <h3 style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            🛣️ Camioneta Activa en Ruta
+                          </h3>
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            color: 'var(--accent-color)',
+                            background: 'rgba(16, 185, 129, 0.15)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: '6px'
+                          }}>
+                            🛣️ En Tránsito
+                          </span>
+                        </div>
 
-                {isWorkshopLocked && (
-                  <div className="alert danger" style={{ padding: '0.75rem 1rem', fontSize: '0.8rem', marginBottom: '1rem' }}>
-                    ⚠️ Esta unidad está registrada en el taller de mantenimiento. No se puede iniciar ruta ni cargar mercancía.
-                  </div>
-                )}
+                        <div style={{
+                          padding: '0.85rem 1.05rem',
+                          borderRadius: '8px',
+                          background: 'rgba(59, 130, 246, 0.08)',
+                          border: '1px solid rgba(59, 130, 246, 0.15)',
+                          fontSize: '0.85rem',
+                          color: 'var(--text-main)',
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '1rem 2rem',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: '1rem'
+                        }}>
+                          <div>
+                            👤 <strong>Chofer / Vendedor:</strong> {driverName}
+                          </div>
+                          <div>
+                            🛣️ <strong>Ruta:</strong> Ruta {routeId}
+                          </div>
+                          <div>
+                            🚚 <strong>Placas de Unidad:</strong> {truckPlates}
+                          </div>
+                        </div>
 
-                {selectedTruckStatus === 'transito' ? (
-                  <div style={{
-                    padding: '0.85rem 1.05rem',
-                    borderRadius: '8px',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    border: '1px solid rgba(59, 130, 246, 0.15)',
-                    fontSize: '0.85rem',
-                    color: 'var(--text-main)',
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '1rem 2rem',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '1rem'
-                  }}>
-                    <div>
-                      👤 <strong>Chofer / Vendedor:</strong> {driverName}
-                    </div>
-                    <div>
-                      🛣️ <strong>Ruta:</strong> Ruta {routeId}
-                    </div>
-                    <div>
-                      🚚 <strong>Placas de Unidad:</strong> {truckPlates}
-                    </div>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSaveConfig}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
-                      
-                      <div className="form-group" style={{ flex: 1, minWidth: '160px', marginBottom: 0 }}>
-                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Chofer / Vendedor</label>
-                        <select
-                          className="form-control"
-                          value={driverName}
-                          onChange={(e) => setDriverName(e.target.value)}
-                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                          disabled={isConfigDisabled}
-                        >
-                          <option value="">Seleccionar Chofer</option>
-                          {users
-                            .filter(u => u.role === 'driver' && u.isActive)
-                            .map(u => (
-                               <option key={u.id} value={u.name}>
-                                 {u.name}
-                               </option>
-                            ))}
-                        </select>
+                        {/* Active Transit Operations: Sell and Recharge buttons */}
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                          <button
+                            type="button"
+                            onClick={handleOpenSaleModal}
+                            className="btn btn-primary"
+                            style={{
+                              flex: 1,
+                              background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+                              color: 'white',
+                              fontWeight: 700,
+                              fontSize: '0.85rem',
+                              padding: '0.65rem 1rem',
+                              borderRadius: '8px',
+                              border: 'none',
+                              boxShadow: '0 4px 6px rgba(59, 130, 246, 0.2)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.35rem'
+                            }}
+                          >
+                            🛒 Registrar Venta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleOpenRechargeModal}
+                            className="btn btn-secondary"
+                            style={{
+                              flex: 1,
+                              background: 'linear-gradient(135deg, #10B981, #059669)',
+                              color: 'white',
+                              fontWeight: 700,
+                              fontSize: '0.85rem',
+                              padding: '0.65rem 1rem',
+                              borderRadius: '8px',
+                              border: 'none',
+                              boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.35rem'
+                            }}
+                          >
+                            🔄 Registrar Recarga
+                          </button>
+                        </div>
                       </div>
+                    </IonCol>
+                  </IonRow>
 
-                      <div className="form-group" style={{ flex: '0 0 120px', marginBottom: 0 }}>
-                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Ruta Asignada</label>
-                        <select
-                          className="form-control"
-                          value={routeId}
-                          onChange={(e) => setRouteId(e.target.value)}
-                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                          disabled={isConfigDisabled}
-                        >
-                          <option value="">Seleccionar</option>
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(r => (
-                            <option key={r} value={String(r)}>Ruta {r}</option>
-                          ))}
-                        </select>
+                  {/* Section 2: Truck Inventory View (Read Only) */}
+                  <IonRow>
+                    <IonCol size="12">
+                      <div className="glass-card" style={{ padding: '1.25rem', background: 'white' }}>
+                        <h3 style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-main)', margin: '0 0 1rem 0' }}>
+                          📦 Inventario a Bordo de la Camioneta
+                        </h3>
+
+                        {/* Search and Brand filter controls */}
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                          <div style={{ position: 'relative', flex: 1 }}>
+                            <span style={{ position: 'absolute', left: '0.55rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.85rem', pointerEvents: 'none' }}>
+                              🔍
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="Buscar producto..."
+                              value={searchText}
+                              onChange={(e) => setSearchText(e.target.value)}
+                              style={{
+                                width: '100%',
+                                padding: '0.45rem 1.75rem 0.45rem 1.75rem',
+                                fontSize: '0.85rem',
+                                border: '1px solid var(--card-border)',
+                                borderRadius: '8px',
+                                background: 'white',
+                                color: 'black',
+                                outline: 'none'
+                              }}
+                            />
+                          </div>
+
+                          <div style={{ position: 'relative' }}>
+                            <span style={{ position: 'absolute', left: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.85rem', pointerEvents: 'none' }}>
+                              🏷️
+                            </span>
+                            <select
+                              value={selectedBrand}
+                              onChange={(e) => setSelectedBrand(e.target.value)}
+                              style={{
+                                padding: '0.45rem 0.5rem 0.45rem 1.6rem',
+                                fontSize: '0.85rem',
+                                border: '1px solid var(--card-border)',
+                                borderRadius: '8px',
+                                background: 'white',
+                                color: 'black',
+                                outline: 'none',
+                                appearance: 'none',
+                                minWidth: '95px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <option value="">Marcas</option>
+                              {uniqueBrands.map((b) => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Inventory Table */}
+                        <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}>
+                          <table className="client-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '60%', position: 'sticky', top: 0, zIndex: 10, background: 'hsl(210, 30%, 92%)' }}>Producto</th>
+                                <th style={{ width: '40%', textAlign: 'right', position: 'sticky', top: 0, zIndex: 10, background: 'hsl(210, 30%, 92%)' }}>Cantidad a Bordo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredProducts
+                                .filter(prod => (prod.truckStock || 0) > 0)
+                                .map((prod) => (
+                                  <tr key={prod.id}>
+                                    <td>
+                                      <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-main)' }}>
+                                        {prod.name}
+                                      </div>
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                        SKU: #{prod.sku} • Marca: {prod.brand || 'Genérico'}
+                                      </div>
+                                    </td>
+                                    <td style={{ textAlign: 'right', fontSize: '0.9rem', fontWeight: 700, color: 'var(--primary-color)' }}>
+                                      {prod.truckStock} {prod.unit}
+                                    </td>
+                                  </tr>
+                                ))}
+                              {filteredProducts.filter(prod => (prod.truckStock || 0) > 0).length === 0 && (
+                                <tr>
+                                  <td colSpan={2} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                    No hay productos con stock a bordo que coincidan.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-
-                      <div className="form-group" style={{ flex: '0 0 180px', marginBottom: 0 }}>
-                        <label className="form-label" style={{ fontSize: '0.8rem' }}>Placas de Unidad</label>
-                        <select
-                          className="form-control"
-                          value={truckPlates}
-                          onChange={(e) => handleTruckPlatesChange(e.target.value)}
-                          style={{ padding: '0.45rem', fontSize: '0.85rem' }}
-                        >
-                          <option value="">Seleccionar Unidad</option>
-                          {trucks.map(t => (
-                            <option key={t.id} value={`${t.name} (Eco: ${t.ecoNumber})`}>
-                              {t.name} (Eco: {t.ecoNumber})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <button 
-                        type="submit" 
-                        className="btn btn-primary"
-                        style={{ width: 'auto', padding: '0.55rem 1rem', fontSize: '0.85rem', height: '38px' }}
-                        disabled={isConfigDisabled}
-                      >
-                        Guardar 💾
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {/* Dispatch Banderazo Button */}
-                {(selectedTruckStatus === 'bodega' || selectedTruckStatus === 'esperando_salida') && driverName && truckPlates && routeId && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleBanderazoSalida}
-                    style={{
-                      background: 'linear-gradient(135deg, #10B981, #059669)',
-                      color: 'white',
-                      fontWeight: 700,
-                      fontSize: '0.9rem',
-                      padding: '0.65rem 1.25rem',
-                      marginTop: '1.25rem',
-                      width: '100%',
-                      borderRadius: '8px',
-                      border: 'none',
-                      boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '0.5rem'
-                    }}
-                  >
-                    🚀 Dar Banderazo de Salida (Poner en Tránsito)
-                  </button>
-                )}
-
-                {/* Active Transit Operations: Sell and Recharge buttons */}
-                {selectedTruckStatus === 'transito' && (
-                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
-                    <button
-                      type="button"
-                      onClick={handleOpenSaleModal}
-                      className="btn btn-primary"
-                      style={{
-                        flex: 1,
-                        background: 'linear-gradient(135deg, #3B82F6, #2563EB)',
-                        color: 'white',
-                        fontWeight: 700,
-                        fontSize: '0.85rem',
-                        padding: '0.65rem 1rem',
-                        borderRadius: '8px',
-                        border: 'none',
-                        boxShadow: '0 4px 6px rgba(59, 130, 246, 0.2)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.35rem'
-                      }}
-                    >
-                      🛒 Registrar Venta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenRechargeModal}
-                      className="btn btn-secondary"
-                      style={{
-                        flex: 1,
-                        background: 'linear-gradient(135deg, #10B981, #059669)',
-                        color: 'white',
-                        fontWeight: 700,
-                        fontSize: '0.85rem',
-                        padding: '0.65rem 1rem',
-                        borderRadius: '8px',
-                        border: 'none',
-                        boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.35rem'
-                      }}
-                    >
-                      🔄 Registrar Recarga
-                    </button>
-                  </div>
-                )}
-              </div>
-            </IonCol>
-          </IonRow>
-
-          {/* Section 2: Truck Inventory Loading */}
-          <IonRow>
-            <IonCol size="12">
-              <div className="glass-card" style={{ padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)', margin: 0 }}>
-                    📦 Carga de Inventario a Camioneta
-                  </h3>
-                  
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={handleClearTruckStock}
-                    disabled={isLoadAdjustmentDisabled}
-                    style={{ width: 'auto', padding: '0.35rem 0.65rem', fontSize: '0.75rem', color: 'var(--danger-color)' }}
-                  >
-                    🗑️ Vaciar Camioneta
-                  </button>
-                </div>
-
-                {/* Filter and Search controls */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <div style={{ position: 'relative', flex: 1 }}>
-                    <span style={{ position: 'absolute', left: '0.55rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.85rem', pointerEvents: 'none' }}>
-                      🔍
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="Buscar producto..."
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.45rem 1.75rem 0.45rem 1.75rem',
-                        fontSize: '0.85rem',
-                        border: '1px solid var(--card-border)',
-                        borderRadius: '8px',
-                        background: 'rgba(255, 255, 255, 0.7)',
-                        color: 'var(--text-main)',
-                        outline: 'none'
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ position: 'relative' }}>
-                    <span style={{ position: 'absolute', left: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.85rem', pointerEvents: 'none' }}>
-                      🏷️
-                    </span>
-                    <select
-                      value={selectedBrand}
-                      onChange={(e) => setSelectedBrand(e.target.value)}
-                      style={{
-                        padding: '0.45rem 0.5rem 0.45rem 1.6rem',
-                        fontSize: '0.85rem',
-                        border: '1px solid var(--card-border)',
-                        borderRadius: '8px',
-                        background: 'rgba(255, 255, 255, 0.7)',
-                        color: 'var(--text-main)',
-                        outline: 'none',
-                        appearance: 'none',
-                        minWidth: '95px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <option value="">Marcas</option>
-                      {uniqueBrands.map((b) => (
-                        <option key={b} value={b}>{b}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Inventory table */}
-                <div className="table-responsive" style={{ maxHeight: 'calc(100vh - 380px)', overflowY: 'auto' }}>
-                  <table className="client-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '45%', position: 'sticky', top: 0, zIndex: 10, background: 'hsl(210, 30%, 92%)' }}>Producto</th>
-                        <th style={{ width: '15%', textAlign: 'right', position: 'sticky', top: 0, zIndex: 10, background: 'hsl(210, 30%, 92%)' }}>Dispon.</th>
-                        <th style={{ width: '40%', textAlign: 'center', position: 'sticky', top: 0, zIndex: 10, background: 'hsl(210, 30%, 92%)' }}>Cargar en Camioneta</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredProducts.map((prod) => {
-                        const loadedStock = prod.truckStock || 0;
-                        return (
-                          <tr key={prod.id}>
-                            <td>
-                              <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-main)' }}>
-                                {prod.name}
-                              </div>
-                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                                SKU: #{prod.sku} • Marca: {prod.brand || 'Genérico'} ({prod.unit})
-                              </div>
-                            </td>
-                            <td style={{ textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                              {prod.stock}
-                            </td>
-                            <td style={{ textAlign: 'center' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
-                                <button
-                                  type="button"
-                                  className="emoji-action-btn"
-                                  onClick={() => handleAdjustStock(prod, -10)}
-                                  style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
-                                  title="Quitar 10"
-                                  disabled={isLoadAdjustmentDisabled}
-                                >
-                                  -10
-                                </button>
-                                <button
-                                  type="button"
-                                  className="emoji-action-btn"
-                                  onClick={() => handleAdjustStock(prod, -1)}
-                                  style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
-                                  title="Quitar 1"
-                                  disabled={isLoadAdjustmentDisabled}
-                                >
-                                  ➖
-                                </button>
-                                
-                                <input
-                                  type="number"
-                                  value={loadedStock}
-                                  onChange={(e) => handleDirectStockChange(prod, e.target.value)}
-                                  style={{
-                                    width: '48px',
-                                    padding: '0.3rem',
-                                    textAlign: 'center',
-                                    fontSize: '0.85rem',
-                                    border: '1px solid var(--card-border)',
-                                    borderRadius: '4px',
-                                    background: 'white',
-                                    color: 'black'
-                                  }}
-                                  disabled={isLoadAdjustmentDisabled}
-                                />
-
-                                <button
-                                  type="button"
-                                  className="emoji-action-btn"
-                                  onClick={() => handleAdjustStock(prod, 1)}
-                                  style={{ width: '24px', padding: '0.2rem 0', fontSize: '0.75rem' }}
-                                  title="Añadir 1"
-                                  disabled={isLoadAdjustmentDisabled}
-                                >
-                                  ➕
-                                </button>
-                                <button
-                                  type="button"
-                                  className="emoji-action-btn"
-                                  onClick={() => handleAdjustStock(prod, 10)}
-                                  style={{ width: '32px', padding: '0.2rem 0', fontSize: '0.7rem' }}
-                                  title="Añadir 10"
-                                  disabled={isLoadAdjustmentDisabled}
-                                >
-                                  +10
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {filteredProducts.length === 0 && (
-                        <tr>
-                          <td colSpan={3} style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
-                            No se encontraron productos.
-                          </td>
-                        </tr>
+                    </IonCol>
+                  </IonRow>
+                </>
+              ) : (
+                <IonRow>
+                  <IonCol size="12">
+                    <div className="glass-card" style={{ padding: '2rem', textAlign: 'center', background: 'white' }}>
+                      <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '1rem' }}>⚠️</span>
+                      <h3 style={{ fontWeight: 800, color: 'var(--text-main)', margin: '0 0 0.5rem 0' }}>
+                        Camioneta Inactiva / No Despachada
+                      </h3>
+                      {activeSessionUser === 'admin' ? (
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 1rem 0' }}>
+                          Esta unidad no ha iniciado su ruta hoy. Para asignarle un chofer, ruta y cargar su inventario, dirígete a la pestaña <strong>Salida de Camioneta 🚀</strong> en el menú lateral.
+                        </p>
+                      ) : (
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
+                          No tienes asignada una camioneta activa en ruta. Por favor, solicita a un administrador que asigne tu unidad e inicie tu ruta de hoy.
+                        </p>
                       )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </IonCol>
-          </IonRow>
+                    </div>
+                  </IonCol>
+                </IonRow>
+              )}
             </>
           )}
         </>

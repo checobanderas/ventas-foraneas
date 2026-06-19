@@ -22,6 +22,7 @@ import ProductModule from './components/ProductModule';
 import TruckModule from './components/TruckModule';
 import { UserModule } from './components/UserModule';
 import { LogisticsModule } from './components/LogisticsModule';
+import { DispatchModule } from './components/DispatchModule';
 
 export const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -29,7 +30,7 @@ export const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users' | 'logistics'>('clients');
+  const [currentView, setCurrentView] = useState<'clients' | 'products' | 'truck' | 'users' | 'logistics' | 'dispatch'>('clients');
   const [activeSessionUser, setActiveSessionUser] = useState<string>(() => {
     return localStorage.getItem('active_session_user') || 'admin';
   });
@@ -321,6 +322,26 @@ export const App: React.FC = () => {
                     <IonLabel>Logística de Flota</IonLabel>
                   </IonItem>
                 )}
+
+                {activeSessionUser === 'admin' && (
+                  <IonItem 
+                    button 
+                    onClick={() => setCurrentView('dispatch')} 
+                    style={{
+                      '--background': currentView === 'dispatch' ? 'hsla(224, 76%, 54%, 0.12)' : 'transparent',
+                      '--color': currentView === 'dispatch' ? 'var(--primary-color)' : 'var(--text-main)',
+                      '--border-radius': '8px',
+                      '--margin-bottom': '0.5rem',
+                      'fontWeight': 700,
+                      'fontSize': '0.9rem',
+                      'cursor': 'pointer'
+                    }}
+                    lines="none"
+                  >
+                    <span style={{ fontSize: '1.25rem', marginRight: '0.75rem' }}>🚀</span>
+                    <IonLabel>Salida de Camioneta 🚀</IonLabel>
+                  </IonItem>
+                )}
               </IonMenuToggle>
             </IonList>
           </IonContent>
@@ -493,22 +514,30 @@ export const App: React.FC = () => {
                  <UserModule 
                    users={users}
                  />
-               ) : currentView === 'logistics' ? (
-                 <LogisticsModule 
-                   trucks={trucks}
-                   products={products}
-                   onTrucksUpdated={loadLocalData}
-                 />
-               ) : (
-                   <TruckModule 
-                     onInventoryUpdated={loadLocalData}
-                     products={products}
-                     users={users}
-                     trucks={trucks}
-                     clients={clients}
-                     activeSessionUser={activeSessionUser}
-                   />
-               )}
+                ) : currentView === 'logistics' ? (
+                  <LogisticsModule 
+                    trucks={trucks}
+                    products={products}
+                    onTrucksUpdated={loadLocalData}
+                  />
+                ) : currentView === 'dispatch' ? (
+                  <DispatchModule 
+                    trucks={trucks}
+                    products={products}
+                    users={users}
+                    onTrucksUpdated={loadLocalData}
+                    onProductsUpdated={loadLocalData}
+                    activeSessionUser={activeSessionUser}
+                  />
+                ) : (
+                    <TruckModule 
+                      onInventoryUpdated={loadLocalData}
+                      products={products}
+                      trucks={trucks}
+                      clients={clients}
+                      activeSessionUser={activeSessionUser}
+                    />
+                )}
 
               {/* Sync Panel & Logs */}
               <footer className="glass-card" style={{ marginTop: 'auto', padding: '0.85rem' }}>
