@@ -546,6 +546,16 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
 
   const corteSummary = getCorteSalesSummary();
 
+  // Filter clients for display in modal
+  const filteredClients = clients.filter(c => {
+    const term = clientSearchText.toLowerCase();
+    const matchesRoute = !term.trim()
+      ? (!routeId || String(c.routeId) === routeId || !c.routeId || c.routeId === 0 || String(c.routeId) === '0')
+      : true;
+    const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
+    return matchesRoute && matchesSearch;
+  });
+
   return (
     <IonGrid style={{ padding: 0 }}>
       {/* Tabs Menu Navigation */}
@@ -577,13 +587,13 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
           {activeSessionUser !== 'admin' && selectedTruckStatus !== 'transito' ? (
             <IonRow>
               <IonCol size="12">
-                <div className="glass-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', border: '1px solid var(--danger-color)', background: 'rgba(239, 68, 68, 0.05)', marginBottom: '1rem' }}>
+                <div className="glass-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', border: '1px solid var(--danger-color)', background: 'rgba(239, 68, 68, 0.05)', marginBottom: '[...]
                   <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
                   <h3 style={{ fontWeight: 700, fontSize: '1.25rem', color: 'var(--danger-color)', margin: '0 0 0.5rem 0' }}>
                     Sin Camioneta Activa en Ruta
                   </h3>
                   <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', maxWidth: '500px', margin: '0 auto 1.5rem auto', lineHeight: 1.5 }}>
-                    No tienes una camioneta asignada en tránsito para tu perfil (<strong>{activeSessionUser}</strong>). Solicita al administrador que registre tu salida y ponga tu camioneta en tránsito desde la oficina para poder realizar ventas.
+                    No tienes una camioneta asignada en tránsito para tu perfil (<strong>{activeSessionUser}</strong>). Solicita al administrador que registre tu salida y ponga tu camioneta en t[...]
                   </p>
                 </div>
               </IonCol>
@@ -919,7 +929,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                       </h3>
                       {activeSessionUser === 'admin' ? (
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 1rem 0' }}>
-                          Esta unidad no ha iniciado su ruta hoy. Para asignarle un chofer, ruta y cargar su inventario, dirígete a la pestaña <strong>Salida de Camioneta 🚀</strong> en el menú lateral.
+                          Esta unidad no ha iniciado su ruta hoy. Para asignarle un chofer, ruta y cargar su inventario, dirígete a la pestaña <strong>Salida de Camioneta 🚀</strong> en el me[...]
                         </p>
                       ) : (
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
@@ -987,7 +997,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     </div>
                   </div>
 
-                  <div style={{ background: 'var(--primary-color)', color: '#fff', padding: '0.75rem', borderRadius: '8px', gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ background: 'var(--primary-color)', color: '#fff', padding: '0.75rem', borderRadius: '8px', gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between',[...]
                     <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Total Entregado / Cobrado:</span>
                     <span style={{ fontSize: '1.25rem', fontWeight: 800 }}>
                       ${corteSummary.totalSales.toFixed(2)}
@@ -1046,7 +1056,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                                 </div>
                               </td>
                               <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{calcInitial}</td>
-                              <td style={{ textAlign: 'center', fontSize: '0.8rem', color: calcRecharges > 0 ? 'var(--accent-color)' : calcRecharges < 0 ? 'var(--danger-color)' : 'var(--text-secondary)' }}>
+                              <td style={{ textAlign: 'center', fontSize: '0.8rem', color: calcRecharges > 0 ? 'var(--accent-color)' : calcRecharges < 0 ? 'var(--danger-color)' : 'var(--text-sec[...]
                                 {calcRecharges > 0 ? `+${calcRecharges}` : calcRecharges === 0 ? '0' : calcRecharges}
                               </td>
                               <td style={{ textAlign: 'center', fontSize: '0.8rem' }}>{sold}</td>
@@ -1138,7 +1148,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </h4>
                   
                   <div className="form-group" style={{ marginBottom: '0.85rem' }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Nombre del Cliente *</label>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Nombre del Cliente *[...]
                     <input
                       type="text"
                       className="form-control"
@@ -1163,7 +1173,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </div>
 
                   <div className="form-group" style={{ marginBottom: '0.85rem' }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Dirección / Localidad</label>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Dirección / Localid[...]
                     <textarea
                       className="form-control"
                       rows={2}
@@ -1175,7 +1185,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </div>
 
                   <div className="form-group" style={{ marginBottom: '0.85rem' }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Saldo Inicial ($)</label>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Saldo Inicial ($)</l[...]
                     <input
                       type="number"
                       className="form-control"
@@ -1187,7 +1197,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                   </div>
 
                   <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Geolocalización (Coordenadas)</label>
+                    <label className="form-label" style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>Geolocalización (Co[...]
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       <input
                         type="text"
@@ -1208,7 +1218,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        style={{ width: '38px', height: '38px', padding: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '38px', borderRadius: '6px', cursor: 'pointer' }}
+                        style={{ width: '38px', height: '38px', padding: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '38px', borderRadius: '[...]
                         title="Capturar Ubicación GPS actual"
                         onClick={handleGetNewClientLocation}
                         disabled={newClientGeoLoading}
@@ -1285,45 +1295,63 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     }}
                   />
 
-                  <div className="table-responsive" style={{ maxHeight: '350px', overflowY: 'auto' }}>
-                    <table className="client-table" style={{ fontSize: '0.8rem' }}>
-                      <thead>
-                        <tr>
-                          <th>Cliente</th>
-                          <th>Dirección</th>
-                          <th style={{ width: '80px', textAlign: 'center' }}>Acción</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clients
-                          .filter(c => {
-                            const term = clientSearchText.toLowerCase();
-                            // If search query is empty, show route-specific clients OR unassigned/office clients (routeId 0 or null).
-                            // If search query is entered, bypass route check entirely.
-                            const matchesRoute = !term.trim()
-                              ? (!routeId || String(c.routeId) === routeId || !c.routeId || c.routeId === 0 || String(c.routeId) === '0')
-                              : true;
-                            const matchesSearch = c.name.toLowerCase().includes(term) || (c.address && c.address.toLowerCase().includes(term));
-                            return matchesRoute && matchesSearch;
-                          })
-                          .map(c => (
-                            <tr key={c.id}>
-                              <td style={{ fontWeight: 600 }}>{c.name}</td>
-                              <td style={{ color: 'var(--text-secondary)' }}>{c.address || 'Sin Dirección'}</td>
-                              <td style={{ textAlign: 'center' }}>
-                                <button
-                                  type="button"
-                                  className="btn btn-primary"
-                                  onClick={() => setSelectedCartClient(c)}
-                                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', width: 'auto' }}
-                                >
-                                  Seleccionar
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
+                  {/* Clients displayed as Cards with Actions - Like the Clients Page */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem', maxHeight: '450px', overflowY: 'auto' }}>
+                    {filteredClients.length > 0 ? (
+                      filteredClients.map(c => (
+                        <div
+                          key={c.id}
+                          className="glass-card"
+                          style={{
+                            padding: '1rem',
+                            border: '1px solid var(--card-border)',
+                            borderRadius: '8px',
+                            background: 'white',
+                            display: 'grid',
+                            gridTemplateColumns: '1fr auto',
+                            gap: '0.75rem',
+                            alignItems: 'start'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '0.25rem' }}>
+                              {c.name}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                              📍 {c.address || 'Sin Dirección'}
+                            </div>
+                            {c.phone && (
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                                📞 {c.phone}
+                              </div>
+                            )}
+                            {c.initialBalance !== null && c.initialBalance > 0 && (
+                              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--danger-color)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                💰 Saldo: ${c.initialBalance.toFixed(2)}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => setSelectedCartClient(c)}
+                            style={{
+                              padding: '0.5rem 1rem',
+                              fontSize: '0.8rem',
+                              fontWeight: 700,
+                              width: 'auto',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            Seleccionar
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                        No hay clientes disponibles para esta ruta.
+                      </div>
+                    )}
                   </div>
                 </>
               )
@@ -1484,7 +1512,7 @@ export const TruckModule: React.FC<TruckModuleProps> = ({
                     />
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', fontWeight: 800, borderTop: '1px solid var(--card-border)', paddingTop: '0.5rem', marginBottom: '0.75rem', color: 'var(--primary-color)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', fontWeight: 800, borderTop: '1px solid var(--card-border)', paddingTop: '0.5rem', marginBot[...]
                     <span>Total a Cobrar:</span>
                     <span>
                       ${Math.max(0, getCartTotal() - cartDiscount).toFixed(2)}
