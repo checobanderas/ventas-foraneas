@@ -1,8 +1,8 @@
 {
     "PRINTER_MAP": {
         "cuentas": "CUENTAS",
-        "cocina": "OneNote (Desktop)",
-        "barra": "OneNote (Desktop)"
+        "cocina": "f",
+        "barra": "f"
     },
     "PRINTER_PAPER_SIZES": {
         "cuentas": "80mm",

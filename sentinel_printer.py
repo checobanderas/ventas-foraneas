@@ -683,22 +683,36 @@ def send_gdi_to_printer(printer_name: str, data_bytes: bytes, ticket_type: str =
             expanded_lines.append(l)
             continue
             
-        item_split_pattern = r'(\d+\s*(?:x|X)\s+.*?(?:\$?[0-9]+(?:\.[0-9]{1,2})?)(?=\s*\d+\s*(?:x|X)\s+|$))'
-        found_items = re.findall(item_split_pattern, txt, flags=re.IGNORECASE)
-        if len(found_items) > 1:
-            for item_str in found_items:
-                if item_str.strip():
-                    expanded_lines.append({**l, 'text': item_str.strip()})
-            continue
+        # Un-stick glued fiscal field headers (e.g. DDSDREGIMEN -> DDSD\nREGIMEN, CONFIANZALUGAR -> CONFIANZA\nLUGAR)
+        txt = re.sub(
+            r'([A-Z0-9])(RFC|REGIMEN|RÉGIMEN|LUGAR|DIR|SUC|SUCURSAL|TEL|TELEFONO|TELÉFONO|METODO|MÉTODO|FORMA|PAGO)\s*:',
+            r'\1\n\2:',
+            txt,
+            flags=re.IGNORECASE
+        )
+        
+        # Split text by newlines into clean individual lines
+        sub_lines = txt.split('\n')
+        for sl in sub_lines:
+            sl_clean = sl.strip()
+            if not sl_clean:
+                continue
+            item_split_pattern = r'(\d+\s*(?:x|X)\s+.*?(?:\$?[0-9]+(?:\.[0-9]{1,2})?)(?=\s*\d+\s*(?:x|X)\s+|$))'
+            found_items = re.findall(item_split_pattern, sl_clean, flags=re.IGNORECASE)
+            if len(found_items) > 1:
+                for item_str in found_items:
+                    if item_str.strip():
+                        expanded_lines.append({**l, 'text': item_str.strip()})
+                continue
 
-        keywords_pattern = r'(?=(?:RFC|SUC|FOLIO|REIMPRESION|PRECUENTA|MESA|FECHA|HORA|PAGO|SUBTOTAL|(?<!SUB)TOTAL|PROPINA|DESCUENTO|CAMBIO)\s*:)'
-        found_parts = re.split(keywords_pattern, txt, flags=re.IGNORECASE)
-        if len(found_parts) > 1:
-            for p in found_parts:
-                if p.strip():
-                    expanded_lines.append({**l, 'text': p.strip()})
-        else:
-            expanded_lines.append(l)
+            keywords_pattern = r'(?=(?:RFC|REGIMEN|RÉGIMEN|LUGAR|DIR|SUC|SUCURSAL|FOLIO|REIMPRESION|PRECUENTA|MESA|FECHA|HORA|METODO|MÉTODO|FORMA|PAGO|SUBTOTAL|(?<!SUB)TOTAL|PROPINA|DESCUENTO|CAMBIO|TEL|TELÉFONO|TELEFONO)\s*:)'
+            found_parts = re.split(keywords_pattern, sl_clean, flags=re.IGNORECASE)
+            if len(found_parts) > 1:
+                for p in found_parts:
+                    if p.strip():
+                        expanded_lines.append({**l, 'text': p.strip()})
+            else:
+                expanded_lines.append({**l, 'text': sl_clean})
 
     header_drawn = False
     in_table_phase = False
@@ -726,8 +740,6 @@ def send_gdi_to_printer(printer_name: str, data_bytes: bytes, ticket_type: str =
             continue
 
         clean_upper = re.sub(r'[\U00010000-\U0010ffff\u2600-\u27bf\u1f300-\u1f9ff]', '', text).strip().upper()
-        if clean_upper.startswith("TEL") or clean_upper.startswith("TELEFONO") or clean_upper.startswith("CEL") or clean_upper.startswith("CELULAR") or re.search(r'(?:TEL|TELEFONO|TELÉFONO|CEL|CELULAR)\s*:?\s*[0-9()-]{7,}', clean_upper):
-            continue
             
         if size_mode == 'big':
             pt = base_pt * 1.30
@@ -745,22 +757,24 @@ def send_gdi_to_printer(printer_name: str, data_bytes: bytes, ticket_type: str =
         HEADER_KEYS = [
             "MESA", "HORA", "FOLIO", "FECHA", "COMANDA", "SUBTOTAL", "TOTAL", 
             "PROPINA", "DESCUENTO", "PAGADO CON", "PAGADO", "PAGO CON", "PAGO", 
-            "METODO DE PAGO", "FORMA DE PAGO", "DIR", "TEL", "CELULAR", 
+            "METODO DE PAGO", "MÉTODO DE PAGO", "METODO", "MÉTODO", "FORMA DE PAGO", "FORMA", 
+            "DIR", "DIR FISCAL", "DIRECCION", "DIRECCIÓN", "TEL", "TELEFONO", "TELÉFONO", "CELULAR", 
             "CLIENTE", "ATENDIO", "MESERO", "REIMPRESION", "CUENTA", "PRECUENTA", 
-            "SUC", "RFC", "DATOS DE ENVIO", "SON", "EFECTIVO", "TARJETA", 
+            "SUC", "SUCURSAL", "RFC", "DATOS DE ENVIO", "SON", "EFECTIVO", "TARJETA", 
             "TRANSFERENCIA", "DESTINO", "GRACIAS", "VISITA", "VUELVA", "OBS", 
-            "FACTURAR", "FACTURA", "REGIMEN", "LUGAR", "EXPEDICION"
+            "FACTURAR", "FACTURA", "REGIMEN", "RÉGIMEN", "REGIMEN FISCAL", "RÉGIMEN FISCAL",
+            "LUGAR", "LUGAR EXPEDICION", "LUGAR DE EXPEDICIÓN", "C.P.", "CP"
         ]
         
         first_word = re.sub(r'[^A-Z]', '', clean_upper.split(':')[0]) if ':' in clean_upper else (re.sub(r'[^A-Z]', '', clean_upper.split()[0]) if clean_upper else "")
         is_header_keyword = any(first_word == k or first_word.startswith(k) for k in HEADER_KEYS)
         
         has_qty = bool(re.match(r'^\s*\d+\s*(?:x|X)\s+', text, re.IGNORECASE))
-        has_price = bool(re.search(r'\$?([0-9]+(?:\.[0-9]{1,2})?)\s*$', text))
+        has_price = bool(re.search(r'\$\s*[0-9]+(?:\.[0-9]{1,2})?\s*$', text)) or bool(re.search(r'\s+[0-9]+\.[0-9]{2}\s*$', text))
         
         is_item_line = bool(
             not is_header_keyword and
-            (has_qty or has_price) and
+            (has_qty or (has_price and not any(k in clean_upper for k in ["C.P.", "CP", "TEL", "RFC", "FOLIO", "MESA", "HORA", "FECHA", "REGIMEN", "RÉGIMEN", "PAGO", "CAMBIO", "SUBTOTAL", "TOTAL", "SUC"]))) and
             not any(c in ('-', '=', '_', '*') for c in text)
         )
 
@@ -846,7 +860,7 @@ def send_gdi_to_printer(printer_name: str, data_bytes: bytes, ticket_type: str =
             y = wrap_and_draw_text(hDC, formatted_dt, margin_left, margin_right, printable_width, y, align=0, line_spacing=4)
             continue
         
-        total_match = re.search(r'^(?:[^\w\s]+\s*)?(TOTAL A PAGAR|TOTAL|SUBTOTAL|SUMA TOTAL|PROPINA|DESCUENTO|PAGADO CON|PAGADO|PAGO CON|METODO DE PAGO|FORMA DE PAGO|PAGO|CAMBIO|ATENDIDO POR|MESERO|MESA|FACTURAR|FACTURA)\s*:?\s*(.*)$', text, re.IGNORECASE)
+        total_match = re.search(r'^(?:[^\w\s]+\s*)?(TOTAL A PAGAR|TOTAL|SUBTOTAL|SUMA TOTAL|PROPINA|DESCUENTO|PAGADO CON|PAGADO|PAGO CON|METODO DE PAGO|MÉTODO DE PAGO|FORMA DE PAGO|METODO|MÉTODO|PAGO|CAMBIO|FACTURAR|FACTURA)\s*:?\s*(.*)$', text, re.IGNORECASE)
         has_total_keyword = bool(total_match or ("TOTAL" in text.upper() and "SUBTOTAL" not in text.upper()))
         
         if has_total_keyword:
@@ -860,44 +874,69 @@ def send_gdi_to_printer(printer_name: str, data_bytes: bytes, ticket_type: str =
 
             if total_match:
                 match_keyword = total_match.group(1).upper()
-                if "PAGADO CON" in match_keyword or "PAGO CON" in match_keyword or "METODO" in match_keyword or "FORMA" in match_keyword:
-                    label = "💳 PAGO CON:"
+                val = total_match.group(2).strip()
+                if any(k in match_keyword for k in ["PAGADO CON", "PAGO CON"]):
+                    label = "💵 PAGADO CON:"
                 elif "PAGADO" in match_keyword:
-                    label = "PAGADO:"
-                elif "PAGO" in match_keyword:
-                    label = "💳 PAGO CON:"
+                    label = "💵 PAGADO CON:"
+                elif any(k in match_keyword for k in ["METODO", "MÉTODO", "FORMA", "PAGO"]):
+                    clean_val = (val or match_keyword).upper()
+                    if "DÉBITO" in clean_val or "DEBITO" in clean_val:
+                        label = "💳 TARJETA DÉBITO"
+                    elif "CRÉDITO" in clean_val or "CREDITO" in clean_val:
+                        label = "💳 TARJETA CRÉDITO"
+                    elif "EFECTIVO" in clean_val or "CASH" in clean_val:
+                        label = "💵 EFECTIVO"
+                    elif "TRANSFERENCIA" in clean_val or "TRANSFER" in clean_val:
+                        label = "💸 TRANSFERENCIA"
+                    elif "LUPAY" in clean_val:
+                        label = "📲 LUPAY"
+                    elif "TARJETA" in clean_val:
+                        label = "💳 TARJETA"
+                    elif clean_val and clean_val not in ["PAGO", "METODO", "MÉTODO"]:
+                        label = f"💳 {clean_val}"
+                    else:
+                        label = "💳 TARJETA"
+                    val = ""
+                elif "CAMBIO" in match_keyword:
+                    label = "🪙 CAMBIO:"
                 elif "FACTURAR" in match_keyword or "FACTURA" in match_keyword:
                     label = "🧾 REQUIERE FACTURA"
                     val = ""
                 else:
                     label = match_keyword + ":"
-                val = total_match.group(2).strip()
             else:
                 parts = text.split(":", 1)
                 label = parts[0].strip().upper() + ":"
                 val = parts[1].strip() if len(parts) > 1 else ""
 
-            is_total_label = ("TOTAL" in label and "SUBTOTAL" not in label) and not label.startswith("PAGADO") and not label.startswith("💳 PAGO") and not label.startswith("PAGO")
+            is_total_label = ("TOTAL" in label and "SUBTOTAL" not in label) and not label.startswith("PAGADO") and not label.startswith("💳") and not label.startswith("💵") and not label.startswith("🪙")
             
             lbl_pt = pt * 1.15 if is_total_label else pt
             if is_total_label:
                 lbl_str = "TOTAL A PAGAR:"
+            elif label.startswith("💳") or label.startswith("💵") or label.startswith("💸") or label.startswith("📲"):
+                lbl_str = label
+                lbl_pt = pt * 1.25
             else:
                 lbl_str = label
-            fl = get_font(FONT_NAME, lbl_pt, is_total_label or is_bold, use_emoji_font=has_emoji(lbl_str))
+            fl = get_font(FONT_NAME, lbl_pt, is_total_label or is_bold or label.startswith("💳") or label.startswith("💵"), use_emoji_font=has_emoji(lbl_str))
             hDC.SelectObject(fl)
             
-            lbl_w, lbl_h = hDC.GetTextExtent(lbl_str)
-            x_lbl = margin_left
-            hDC.TextOut(x_lbl, y, lbl_str)
-            
-            val_pt = pt * 1.25 if is_total_label else pt
-            fb = get_font(FONT_NAME, val_pt, True, use_emoji_font=has_emoji(val))
-            hDC.SelectObject(fb)
-            val_width, val_height = hDC.GetTextExtent(val)
-            x_val = max(margin_left + lbl_w + 10, width - margin_right - val_width)
-            hDC.TextOut(x_val, y, val)
-            y += max(lbl_h, val_height) + 6
+            if val:
+                lbl_w, lbl_h = hDC.GetTextExtent(lbl_str)
+                x_lbl = margin_left
+                hDC.TextOut(x_lbl, y, lbl_str)
+                
+                val_pt = pt * 1.25 if is_total_label else pt
+                fb = get_font(FONT_NAME, val_pt, True, use_emoji_font=has_emoji(val))
+                hDC.SelectObject(fb)
+                val_width, val_height = hDC.GetTextExtent(val)
+                x_val = max(margin_left + lbl_w + 10, width - margin_right - val_width)
+                hDC.TextOut(x_val, y, val)
+                y += max(lbl_h, val_height) + 6
+            else:
+                y = wrap_and_draw_text(hDC, lbl_str, margin_left, margin_right, printable_width, y, align=1, line_spacing=4)
             
             if is_total_label:
                 monto_match = re.search(r'([0-9.,]+)', val)

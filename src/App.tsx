@@ -2551,6 +2551,11 @@ export default function App() {
   const [formTenantLogoUrl, setFormTenantLogoUrl] = useState("");
   const [formTenantRequireInternalFolio, setFormTenantRequireInternalFolio] = useState<boolean>(false);
 
+  // Tenant Transfer States (Traspaso de Inquilino inline)
+  const [transferStep, setTransferStep] = useState<0 | 1 | 2>(0);
+  const [transferTargetOwnerKey, setTransferTargetOwnerKey] = useState("");
+  const [transferIncludeBranches, setTransferIncludeBranches] = useState(true);
+
   const resetTenantForm = () => {
     setEditingTenant(null);
     setFormTenantName("");
@@ -2567,6 +2572,9 @@ export default function App() {
     setFormTenantLng("");
     setFormTenantLogoUrl("");
     setFormTenantRequireInternalFolio(false);
+    setTransferStep(0);
+    setTransferTargetOwnerKey("");
+    setTransferIncludeBranches(true);
   };
 
   const handleEditTenantClick = (tenant: CompanyTenant) => {
@@ -2585,7 +2593,86 @@ export default function App() {
     setFormTenantLng(tenant.lng ?? "");
     setFormTenantLogoUrl(tenant.logoUrl || "");
     setFormTenantRequireInternalFolio(tenant.requireInternalFolio === true);
+    setTransferStep(0);
+    setTransferTargetOwnerKey("");
+    setTransferIncludeBranches(tenant.type === "Matriz");
     setShowTenantCrudModal(true);
+  };
+
+  const executeTenantTransfer = async () => {
+    if (!editingTenant || !transferTargetOwnerKey) return;
+
+    const targetOwner = customOwners.find(o => o.key === transferTargetOwnerKey);
+    const targetName = targetOwner ? targetOwner.name : formTenantPropietario || "PROPIETARIO";
+    const originOwnerKey = editingTenant.ownerKey || "";
+    const originOwner = customOwners.find(o => o.key === originOwnerKey);
+    const originOwnerName = originOwner?.name || editingTenant.propietario || "ORIGEN";
+
+    // 1. Prepare updated main tenant
+    const updatedTenant: CompanyTenant = {
+      ...editingTenant,
+      name: formTenantName.trim() || editingTenant.name,
+      rfc: formTenantRfc.trim().toUpperCase() || editingTenant.rfc,
+      sucursalDefault: formTenantSucursal.trim() || editingTenant.sucursalDefault,
+      ownerKey: transferTargetOwnerKey,
+      propietario: targetName,
+      ownerEmail: targetOwner?.ownerEmail || formTenantEmail || editingTenant.ownerEmail,
+      type: formTenantType,
+      direccion: formTenantDireccion.trim() || editingTenant.direccion,
+      lat: formTenantLat !== "" ? Number(formTenantLat) : editingTenant.lat,
+      lng: formTenantLng !== "" ? Number(formTenantLng) : editingTenant.lng,
+      logoUrl: formTenantLogoUrl || editingTenant.logoUrl,
+      requireInternalFolio: formTenantRequireInternalFolio,
+      updatedAt: getMexicoISOString(),
+    };
+
+    const updatedCatalog = [...COMPANY_CATALOG];
+    const mainIdx = updatedCatalog.findIndex(c => c.id === editingTenant.id);
+    if (mainIdx !== -1) {
+      updatedCatalog[mainIdx] = updatedTenant;
+    }
+
+    // 2. If transferIncludeBranches & Matriz, update all dependent branches of origin owner
+    let transferredBranchCount = 0;
+    if (transferIncludeBranches && editingTenant.type === "Matriz") {
+      updatedCatalog.forEach((comp, i) => {
+        if (comp.id !== editingTenant.id && comp.ownerKey === originOwnerKey) {
+          updatedCatalog[i] = {
+            ...comp,
+            ownerKey: transferTargetOwnerKey,
+            propietario: targetName,
+            updatedAt: getMexicoISOString(),
+          };
+          transferredBranchCount++;
+          addTenantToFirebase(updatedCatalog[i]).catch(err => console.warn("Branch sync error:", err));
+        }
+      });
+    }
+
+    // 3. Save main tenant to Firebase
+    try {
+      await addTenantToFirebase(updatedTenant);
+    } catch (err) {
+      console.warn("Could not save tenant to Firebase:", err);
+    }
+
+    // 4. Update global COMPANY_CATALOG array & localStorage
+    COMPANY_CATALOG.length = 0;
+    COMPANY_CATALOG.push(...updatedCatalog);
+    localStorage.setItem("cocinet_custom_tenants_v3", JSON.stringify(COMPANY_CATALOG));
+    setTenantsVersion(prev => prev + 1);
+
+    // 5. Success notification
+    triggerAppNotification(
+      "🔄 Traspaso Concluido Con Éxito",
+      `Se traspasó "${updatedTenant.name}" de ${originOwnerName} (Clave ${originOwnerKey}) a ${targetName} (Clave ${transferTargetOwnerKey})` +
+        (transferredBranchCount > 0 ? ` junto con ${transferredBranchCount} sucursal(es).` : "."),
+      "success"
+    );
+
+    setTransferStep(0);
+    setShowTenantCrudModal(false);
+    resetTenantForm();
   };
 
   const handleSaveTenant = async () => {
@@ -2612,6 +2699,14 @@ export default function App() {
       if (!nextPropietario) {
         nextPropietario = formTenantName.split(" ")[0].toUpperCase();
       }
+    }
+
+    // If editing existing tenant and owner changed in inputs, deploy 2-step confirmation transfer
+    if (editingTenant && (nextOwnerKey !== editingTenant.ownerKey || (nextPropietario && nextPropietario !== editingTenant.propietario))) {
+      setTransferTargetOwnerKey(nextOwnerKey);
+      setTransferIncludeBranches(formTenantType === "Matriz");
+      setTransferStep(1);
+      return;
     }
 
     const tenantData: CompanyTenant = {
@@ -4209,24 +4304,25 @@ export default function App() {
         job.setPrintMode(job.FONT_SIZE_NORMAL).bold(false);
         job.printLine("--------------------------------");
         
-        const rfcVal = (pedido.rfc || companyConfig.rfc || "").toUpperCase();
-        const regVal = (pedido.regimenFiscal || companyConfig.regimenFiscal || "").toUpperCase();
-        const lugVal = (pedido.lugarExpedicion || companyConfig.lugarExpedicion || "").toUpperCase();
-        const dirVal = (pedido.direccionFiscal || companyConfig.direccionFiscal || "").toUpperCase();
-        const telVal = pedido.telefono || companyConfig.telefono || "";
-        const emlVal = sanitizeEmail(pedido.email || companyConfig.email || "");
-        const sucVal = (pedido.sucursal || companyConfig.sucursal || "").toUpperCase();
+        const rfcVal = (pedido.rfc || companyConfig.rfc || selectedTenant?.rfc || "").toUpperCase();
+        const regVal = (pedido.regimenFiscal || companyConfig.regimenFiscal || selectedTenant?.regimenFiscal || "").toUpperCase();
+        const lugVal = (pedido.lugarExpedicion || companyConfig.lugarExpedicion || selectedTenant?.lugarExpedicion || "").toUpperCase();
+        const dirVal = (pedido.direccionFiscal || companyConfig.direccionFiscal || selectedTenant?.direccionFiscal || "").toUpperCase();
+        const telVal = (pedido.telefono || companyConfig.telefono || selectedTenant?.telefono || "").toUpperCase();
+        const emlVal = sanitizeEmail(pedido.email || companyConfig.email || selectedTenant?.email || "");
+        const sucVal = (pedido.sucursal || companyConfig.sucursal || selectedTenant?.sucursalDefault || "").toUpperCase();
 
         if (rfcVal) job.printLine(`RFC: ${rfcVal}`);
         if (regVal) job.printLine(`REGIMEN FISCAL: ${regVal}`);
         if (lugVal) job.printLine(`LUGAR EXPEDICION: ${lugVal}`);
         if (dirVal) job.printLine(`DIR: ${dirVal}`);
         if (sucVal) job.printLine(`SUC: ${sucVal}`);
+        if (telVal) job.printLine(`TEL: ${telVal}`);
         if (emlVal) job.printLine(`✉️ ${emlVal.toLowerCase()}`);
         
         job.printLine("--------------------------------");
         job.printLine(`MESA: ${pedido.mesa}`);
-        const dateStr = pedido.timestamp ? new Date(pedido.timestamp).toLocaleString() : new Date().toLocaleString();
+        const dateStr = pedido.timestamp ? new Date(pedido.timestamp).toLocaleString("es-MX") : new Date().toLocaleString("es-MX");
         job.printLine(`FECHA: ${dateStr}`);
         job.printLine("--------------------------------");
 
@@ -4273,6 +4369,7 @@ export default function App() {
 
         job.printLine(`SUBTOTAL: $${subtotalVal.toFixed(2)}`);
         if (descuentoVal > 0) job.printLine(`DESCUENTO: -$${descuentoVal.toFixed(2)}`);
+        if (propinaVal > 0) job.printLine(`PROPINA: $${propinaVal.toFixed(2)}`);
         
         job.bold(true).printLine(`TOTAL: $${totalVal.toFixed(2)}`).bold(false);
 
@@ -4280,21 +4377,27 @@ export default function App() {
           const m = (p.paymentMethod || p.metodoPago || p.payment_method || p.formaPago || p.tipoPago || "").toString().toLowerCase().trim();
           const ct = (p.cardType || p.tipoTarjeta || "").toString().toLowerCase().trim();
 
-          if (["cash", "efectivo"].includes(m)) return "EFECTIVO";
+          if (["cash", "efectivo"].includes(m)) return "💵 EFECTIVO";
           if (["card", "tarjeta", "credit", "debit", "credito", "debito"].includes(m)) {
-            if (ct === "credito" || m === "credito") return "TARJETA CRÉDITO";
-            if (ct === "debito" || m === "debito") return "TARJETA DÉBITO";
-            return "TARJETA";
+            if (ct === "credito" || m === "credito") return "💳 TARJETA CRÉDITO";
+            if (ct === "debito" || m === "debito") return "💳 TARJETA DÉBITO";
+            return "💳 TARJETA";
           }
-          if (["lupay", "lu-pay"].includes(m)) return "LUPAY";
-          if (["transfer", "transferencia", "spei"].includes(m)) return "TRANSFERENCIA";
-          if (m) return m.toUpperCase();
+          if (["lupay", "lu-pay"].includes(m)) return "📲 LUPAY";
+          if (["transfer", "transferencia", "spei"].includes(m)) return "💸 TRANSFERENCIA";
+          if (m) return `💳 ${m.toUpperCase()}`;
           return "";
         };
 
         const payLabel = getPaymentLabel(pedido);
         if (payLabel) {
-          job.printLine(`💳 PAGO: ${payLabel}`);
+          job.center().bold(true).printLine(payLabel).bold(false).left();
+        }
+        if (pedido.pagadoCon || pedido.montoRecibido) {
+          job.printLine(`PAGADO CON: $${Number(pedido.pagadoCon || pedido.montoRecibido).toFixed(2)}`);
+        }
+        if (pedido.cambio && Number(pedido.cambio) > 0) {
+          job.printLine(`CAMBIO: $${Number(pedido.cambio).toFixed(2)}`);
         }
 
         if (pedido.requiresInvoice) {
@@ -6012,12 +6115,234 @@ export default function App() {
                   className="w-6 h-6 accent-indigo-600 rounded cursor-pointer shrink-0"
                 />
               </div>
+
+              {/* Sección Traspaso de Inquilino a otro Propietario / Dueño (Despliegue Inline sin modales) */}
+              {editingTenant && (
+                <div className="mt-5 text-left">
+                  {transferStep === 0 && (
+                    <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl p-4.5 space-y-3.5 shadow-xs">
+                      <div className="flex items-center gap-3">
+                        <span className="text-3xl">🔄</span>
+                        <div>
+                          <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider m-0">
+                            Traspaso de Inquilino a Otro Propietario / Dueño
+                          </h4>
+                          <p className="text-[11px] font-bold text-amber-800 m-0 mt-0.5 leading-snug">
+                            Selecciona el nuevo propietario de destino para transferir la propiedad de este inquilino ({editingTenant.type}) actualmente asignado a <strong>{editingTenant.propietario}</strong> (Clave: {editingTenant.ownerKey}).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end pt-1">
+                        <div className="sm:col-span-2">
+                          <label className="block text-[10.5px] font-black text-amber-900 uppercase tracking-wider mb-1">
+                            📥 Seleccionar Dueño de Destino:
+                          </label>
+                          <select
+                            value={transferTargetOwnerKey}
+                            onChange={(e) => setTransferTargetOwnerKey(e.target.value)}
+                            className="w-full bg-white border border-amber-300 rounded-xl px-3.5 py-2.5 text-xs font-black text-slate-800 focus:outline-none focus:border-amber-600 shadow-xs cursor-pointer"
+                          >
+                            <option value="">-- Seleccionar Dueño Destino --</option>
+                            {customOwners.map(o => (
+                              <option key={o.key} value={o.key} disabled={o.key === editingTenant.ownerKey}>
+                                {o.avatar} {o.name} (Clave: {o.key}) {o.key === editingTenant.ownerKey ? "← (Origen Actual)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!transferTargetOwnerKey) {
+                              alert("Por favor selecciona el propietario de destino para realizar el traspaso.");
+                              return;
+                            }
+                            if (transferTargetOwnerKey === editingTenant.ownerKey) {
+                              alert("El dueño de destino debe ser diferente al dueño de origen actual.");
+                              return;
+                            }
+                            setTransferIncludeBranches(editingTenant.type === "Matriz");
+                            setTransferStep(1);
+                          }}
+                          className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all border-none cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <span>🔄</span> Iniciar Traspaso
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {transferStep === 1 && (() => {
+                    const originOwnerKey = editingTenant.ownerKey || "";
+                    const originOwner = customOwners.find(o => o.key === originOwnerKey);
+                    const originOwnerName = originOwner?.name || editingTenant.propietario || "ORIGEN S/D";
+                    const targetOwner = customOwners.find(o => o.key === transferTargetOwnerKey);
+                    const targetOwnerName = targetOwner?.name || `Dueño Key ${transferTargetOwnerKey}`;
+                    const dependentBranches = COMPANY_CATALOG.filter(c => c.id !== editingTenant.id && c.ownerKey === originOwnerKey);
+
+                    return (
+                      <div className="bg-amber-500/10 border-2 border-amber-500 rounded-2xl p-5 space-y-4 shadow-md transition-all">
+                        <div className="flex items-center justify-between border-b border-amber-200 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">📍</span>
+                            <div>
+                              <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider m-0">
+                                Confirmación de Traspaso (Paso 1 de 2)
+                              </h4>
+                              <p className="text-[10.5px] font-bold text-amber-800 m-0">
+                                Verifica detalladamente la información del ORIGEN y del DESTINO.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setTransferStep(0)}
+                            className="px-3 py-1 bg-amber-200 hover:bg-amber-300 text-amber-900 font-black text-[10.5px] rounded-lg border-none cursor-pointer uppercase"
+                          >
+                            ✕ Cancelar
+                          </button>
+                        </div>
+
+                        {/* ORIGEN */}
+                        <div className="bg-white border-2 border-amber-300 rounded-xl p-3.5 space-y-1.5 shadow-xs">
+                          <span className="text-[9.5px] font-black text-amber-800 uppercase tracking-wider block">📤 ORIGEN (Propietario Actual):</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-slate-900">
+                              {originOwner?.avatar || "👑"} {originOwnerName}
+                            </span>
+                            <span className="text-[10.5px] font-black bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md">
+                              Clave: {originOwnerKey}
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] font-bold text-slate-600 m-0">
+                            Inquilino: {editingTenant.avatar} <strong>{editingTenant.name}</strong> ({editingTenant.type}) | RFC: {editingTenant.rfc}
+                          </p>
+                        </div>
+
+                        <div className="text-center my-1">
+                          <span className="text-xs font-black text-amber-800 bg-amber-100 px-3.5 py-1 rounded-full border border-amber-300 uppercase shadow-2xs">
+                            ⬇️ TRASPASAR PROPIEDAD AL NUEVO DUEÑO ⬇️
+                          </span>
+                        </div>
+
+                        {/* DESTINO */}
+                        <div className="bg-white border-2 border-indigo-300 rounded-xl p-3.5 space-y-1.5 shadow-xs">
+                          <span className="text-[9.5px] font-black text-indigo-800 uppercase tracking-wider block">📥 DESTINO (Nuevo Propietario):</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-indigo-950">
+                              {targetOwner?.avatar || "👑"} {targetOwnerName}
+                            </span>
+                            <span className="text-[10.5px] font-black bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded-md">
+                              Clave Destino: {transferTargetOwnerKey}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Checkbox sucursales */}
+                        {editingTenant.type === "Matriz" && dependentBranches.length > 0 && (
+                          <div className="bg-white p-3 rounded-xl border border-amber-300 flex items-center justify-between gap-3">
+                            <div>
+                              <span className="text-xs font-black text-slate-800 block">🌳 Traspasar Sucursales Asociadas ({dependentBranches.length})</span>
+                              <span className="text-[10px] font-bold text-slate-500 block">Reasignar también las {dependentBranches.length} sucursal(es) al nuevo propietario.</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={transferIncludeBranches}
+                              onChange={(e) => setTransferIncludeBranches(e.target.checked)}
+                              className="w-5 h-5 accent-amber-600 rounded cursor-pointer shrink-0"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-1 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setTransferStep(0)}
+                            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-xl border-none uppercase cursor-pointer"
+                          >
+                            Regresar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTransferStep(2)}
+                            className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs rounded-xl border-none uppercase shadow-md cursor-pointer"
+                          >
+                            Continuar al Paso 2 (2/2) ➔
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {transferStep === 2 && (() => {
+                    const originOwnerKey = editingTenant.ownerKey || "";
+                    const originOwner = customOwners.find(o => o.key === originOwnerKey);
+                    const originOwnerName = originOwner?.name || editingTenant.propietario || "ORIGEN S/D";
+                    const targetOwner = customOwners.find(o => o.key === transferTargetOwnerKey);
+                    const targetOwnerName = targetOwner?.name || `Dueño Key ${transferTargetOwnerKey}`;
+                    const dependentBranches = COMPANY_CATALOG.filter(c => c.id !== editingTenant.id && c.ownerKey === originOwnerKey);
+
+                    return (
+                      <div className="bg-rose-500/10 border-2 border-rose-500 rounded-2xl p-5 space-y-4 shadow-lg transition-all">
+                        <div className="bg-rose-600 text-white p-3.5 rounded-xl flex items-center gap-2.5 shadow-sm">
+                          <span className="text-2xl">🚨</span>
+                          <div>
+                            <h4 className="text-xs font-black uppercase tracking-wider m-0">SEGUNDO AVISO DE CONFIRMACIÓN (2/2)</h4>
+                            <p className="text-[10.5px] font-bold m-0 opacity-95">
+                              ¿Estás TOTALMENTE SEGURO de ejecutar el traspaso? Esta es la segunda y última verificación.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="bg-white border-2 border-rose-300 rounded-xl p-4 space-y-2.5 shadow-xs text-xs font-bold">
+                          <div className="flex justify-between border-b pb-2">
+                            <span className="text-slate-500">📤 ORIGEN:</span>
+                            <span className="text-slate-900 font-black">{originOwner?.avatar || "👑"} {originOwnerName} (Clave {originOwnerKey})</span>
+                          </div>
+                          <div className="flex justify-between border-b pb-2">
+                            <span className="text-slate-500">🏢 INQUILINO:</span>
+                            <span className="text-amber-900 font-black">{editingTenant.avatar} {editingTenant.name}</span>
+                          </div>
+                          <div className="flex justify-between border-b pb-2">
+                            <span className="text-slate-500">📥 DESTINO:</span>
+                            <span className="text-indigo-900 font-black">{targetOwner?.avatar || "👑"} {targetOwnerName} (Clave {transferTargetOwnerKey})</span>
+                          </div>
+                          {editingTenant.type === "Matriz" && dependentBranches.length > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">🌳 SUCURSALES:</span>
+                              <span className="text-teal-800 font-black">{transferIncludeBranches ? `Se traspasan ${dependentBranches.length} sucursales` : "Solo la Matriz"}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setTransferStep(1)}
+                            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-xl border-none uppercase cursor-pointer"
+                          >
+                            ⬅️ Regresar al Paso 1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={executeTenantTransfer}
+                            className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl border-none uppercase shadow-lg cursor-pointer active:scale-95 transition-all"
+                          >
+                            ✅ CONFIRMAR Y TRASPASAR AHORA (2/2) 🚀
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
 
             {/* Actions */}
             <div className="flex items-center justify-between gap-4 pt-3 flex-wrap">
               {editingTenant && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => {
@@ -6028,6 +6353,20 @@ export default function App() {
                     style={{ color: "#e11d48", backgroundColor: "#ffe4e6" }}
                   >
                     🗑️ Eliminar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!transferTargetOwnerKey) {
+                        const defaultTarget = customOwners.find(o => o.key !== editingTenant.ownerKey)?.key || "";
+                        setTransferTargetOwnerKey(defaultTarget);
+                      }
+                      setTransferIncludeBranches(editingTenant.type === "Matriz");
+                      setTransferStep(1);
+                    }}
+                    className="px-4 py-3 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-black rounded-xl cursor-pointer transition-all border border-amber-200 uppercase tracking-wider border-none"
+                  >
+                    🔄 Traspasar Inquilino
                   </button>
                   <button
                     type="button"
@@ -12695,6 +13034,102 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
     setPendingInvoiceTarget(null);
   };
 
+  const buildWhatsAppInvoiceMessage = (account: any) => {
+    const bName = (companyConfig.businessName || selectedTenant?.name || "RESTAURANTE").toUpperCase();
+    const tableLabel = account.tableLabel || account.mesa || "General";
+    const dateStr = account.timestamp
+      ? new Date(account.timestamp).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })
+      : new Date().toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" });
+
+    const folioStr = account.folio ? `#${account.folio}` : account.id ? `#${String(account.id).slice(-6)}` : "S/F";
+    
+    const m = (account.paymentMethod || account.metodoPago || "").toString().toLowerCase().trim();
+    const ct = (account.cardType || account.tipoTarjeta || "").toString().toLowerCase().trim();
+    let payStr = "💵 Efectivo";
+    if (["card", "tarjeta", "credit", "debit", "credito", "debito"].includes(m)) {
+      if (ct === "credito" || m === "credito") payStr = "💳 Tarjeta Crédito";
+      else if (ct === "debito" || m === "debito") payStr = "💳 Tarjeta Débito";
+      else payStr = "💳 Tarjeta";
+    } else if (["transfer", "transferencia", "spei"].includes(m)) {
+      payStr = "💸 Transferencia";
+    } else if (["lupay", "lu-pay"].includes(m)) {
+      payStr = "📲 Lúpay";
+    }
+
+    const allItems: any[] = [];
+    if (account.comandas && Array.isArray(account.comandas)) {
+      account.comandas.forEach((c: any) => {
+        (c.items || []).forEach((it: any) => {
+          if (!it.isCancelled) allItems.push(it);
+        });
+      });
+    } else if (account.items && Array.isArray(account.items)) {
+      account.items.forEach((it: any) => {
+        if (!it.isCancelled) allItems.push(it);
+      });
+    }
+
+    let itemsStr = "";
+    if (allItems.length > 0) {
+      const grouped = allItems.reduce((acc: any[], item: any) => {
+        const pName = getFormattedProductName(item.product || item).toUpperCase();
+        const pPrice = Number(item.product?.price || item.precio || item.subtotal / (item.quantity || item.cantidad || 1) || 0);
+        const qty = Number(item.quantity || item.cantidad || 1);
+        const existing = acc.find((i) => i.name === pName);
+        if (existing) {
+          existing.qty += qty;
+          existing.subtotal += (item.subtotal || qty * pPrice);
+        } else {
+          acc.push({ name: pName, qty, subtotal: item.subtotal || qty * pPrice });
+        }
+        return acc;
+      }, []);
+
+      itemsStr = grouped
+        .map((i) => `• ${i.qty}x ${i.name} - $${Number(i.subtotal).toFixed(2)}`)
+        .join("\n");
+    }
+
+    const subtotalVal = Number(account.subtotal || account.total || 0);
+    const discountVal = Number(account.discount || account.descuento || 0);
+    const tipVal = Number(account.tip || account.propina || 0);
+    const totalVal = Number(account.total || (subtotalVal + tipVal - discountVal));
+
+    let msg = `¡Hola! 👋 Te saludamos de *${bName}* 🌮🥤\n\n`;
+    msg += `Por este medio nos puedes hacer llegar tu *Constancia de Situación Fiscal (SAT)* 📄 actualizada, así como tu *correo electrónico* ✉️ para poder generarte y enviarte tu factura electrónica.\n\n`;
+    msg += `📌 *DATOS DEL TICKET A FACTURAR:*\n`;
+    msg += `🧾 *Folio:* ${folioStr}\n`;
+    msg += `🪑 *Mesa:* ${tableLabel}\n`;
+    msg += `📅 *Fecha:* ${dateStr}\n\n`;
+
+    if (itemsStr) {
+      msg += `🛒 *DETALLE DEL CONSUMO:*\n${itemsStr}\n\n`;
+    }
+
+    msg += `💰 *Subtotal:* $${subtotalVal.toFixed(2)}\n`;
+    if (discountVal > 0) msg += `🏷️ *Descuento:* -$${discountVal.toFixed(2)}\n`;
+    if (tipVal > 0) msg += `🪙 *Propina:* +$${tipVal.toFixed(2)}\n`;
+    msg += `💵 *TOTAL FACTURA:* $${totalVal.toFixed(2)}\n`;
+    msg += `💳 *Forma de Pago:* ${payStr}\n\n`;
+    msg += `¡Quedamos atentos a tus datos para enviarte tu factura a la brevedad! Quedamos a tus órdenes. 😊🙏`;
+
+    return msg;
+  };
+
+  const handleSendWhatsAppInvoice = (account: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const rawPhone = (account.invoicePhone || invoicePhone || "").replace(/\D/g, "");
+    if (!rawPhone || rawPhone.length < 10) {
+      alert("⚠️ No hay un número de teléfono celular válido capturado para esta factura.");
+      return;
+    }
+    const cleanPhone = rawPhone.length === 10 ? `52${rawPhone}` : rawPhone;
+    const msg = buildWhatsAppInvoiceMessage(account);
+    const encoded = encodeURIComponent(msg);
+    const waUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encoded}`;
+    window.open(waUrl, "_blank");
+  };
+
   const handleQuickChangeAccountStatus = async (
     account: any,
     newStatus: "en_camino" | "entregado" | "pagado" | "no_entregado"
@@ -13162,6 +13597,7 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
       if (lugVal) job.printLine(`LUGAR EXPEDICION: ${lugVal}`);
       if (dirVal) job.printLine(`DIR: ${dirVal}`);
       if (sucVal) job.printLine(`SUC: ${sucVal}`);
+      if (telVal) job.printLine(`TEL: ${telVal}`);
       if (emlVal) job.printLine(`✉️ ${emlVal.toLowerCase()}`);
       
       job.printLine("--------------------------------");
@@ -13175,18 +13611,18 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
         const m = (acc.paymentMethod || acc.metodoPago || acc.payment_method || acc.formaPago || acc.tipoPago || "").toString().toLowerCase().trim();
         const ct = (acc.cardType || acc.tipoTarjeta || "").toString().toLowerCase().trim();
 
-        if (["cash", "efectivo"].includes(m)) return "EFECTIVO";
+        if (["cash", "efectivo"].includes(m)) return "💵 EFECTIVO";
         if (["card", "tarjeta", "credit", "debit", "credito", "debito"].includes(m)) {
-          if (ct === "credito" || m === "credito") return "TARJETA CRÉDITO";
-          if (ct === "debito" || m === "debito") return "TARJETA DÉBITO";
-          return "TARJETA";
+          if (ct === "credito" || m === "credito") return "💳 TARJETA CRÉDITO";
+          if (ct === "debito" || m === "debito") return "💳 TARJETA DÉBITO";
+          return "💳 TARJETA";
         }
-        if (["lupay", "lu-pay"].includes(m)) return "LUPAY";
-        if (["transfer", "transferencia", "spei"].includes(m)) return "TRANSFERENCIA";
-        if (m) return m.toUpperCase();
-        return "EFECTIVO";
+        if (["lupay", "lu-pay"].includes(m)) return "📲 LUPAY";
+        if (["transfer", "transferencia", "spei"].includes(m)) return "💸 TRANSFERENCIA";
+        if (m) return `💳 ${m.toUpperCase()}`;
+        return "💵 EFECTIVO";
       };
-      job.printLine(`PAGO: ${getPaymentLabel(account)}`);
+      job.center().bold(true).printLine(getPaymentLabel(account)).bold(false).left();
       job.printLine("--------------------------------");
 
       job.left();
@@ -15068,34 +15504,46 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
                                   textAlign: "center",
                                 }}
                               >
-                                <span
-                                  style={{
-                                    fontSize: "2.1rem",
-                                    display: "inline-block",
-                                    cursor: "help",
-                                    filter:
-                                      "drop-shadow(0 2px 4px rgba(0,0,0,0.06))",
-                                  }}
-                                  title={
-                                    (account.paymentMethod === "cash"
-                                      ? "Efectivo"
+                                <div className="inline-flex items-center gap-1.5 justify-center" style={{ fontSize: "1.3rem" }}>
+                                  <span
+                                    title={
+                                      (account.paymentMethod === "cash"
+                                        ? "Efectivo"
+                                        : account.paymentMethod === "card"
+                                          ? "Tarjeta"
+                                          : account.paymentMethod === "lupay"
+                                            ? "Lúpay"
+                                            : "Transferencia") +
+                                      (account.requiresInvoice ? ` - Requiere Factura (${account.invoicePhone || "Sin tel."})` : "")
+                                    }
+                                  >
+                                    {account.paymentMethod === "cash"
+                                      ? "💵"
                                       : account.paymentMethod === "card"
-                                        ? "Tarjeta"
+                                        ? "💳"
                                         : account.paymentMethod === "lupay"
-                                          ? "Lúpay"
-                                          : "Transferencia") +
-                                    (account.requiresInvoice ? ` - Requiere Factura (${account.invoicePhone || "Sin tel."})` : "")
-                                  }
-                                >
-                                  {account.paymentMethod === "cash"
-                                    ? "💵"
-                                    : account.paymentMethod === "card"
-                                      ? "💳"
-                                      : account.paymentMethod === "lupay"
-                                        ? "⚡"
-                                        : "🏦"}
-                                  {account.requiresInvoice && (account.invoicePhone ? ` 🧾 (${account.invoicePhone})` : " 🧾")}
-                                </span>
+                                          ? "⚡"
+                                          : "🏦"}
+                                  </span>
+                                  {account.requiresInvoice && (
+                                    <span className="inline-flex items-center gap-1 ml-1">
+                                      <span title="Requiere Factura">🧾</span>
+                                      {account.invoicePhone ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handleSendWhatsAppInvoice(account, e)}
+                                          className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-2.5 py-1 rounded-full text-xs shadow-md transition cursor-pointer active:scale-95 border border-emerald-500"
+                                          title="💬 Enviar WhatsApp solicitando Constancia Fiscal y enviar ticket"
+                                        >
+                                          <span>💬</span>
+                                          <span className="underline">({account.invoicePhone})</span>
+                                        </button>
+                                      ) : (
+                                        <span className="text-stone-400 text-xs font-bold ml-0.5">(Sin tel)</span>
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td style={{ padding: "12px 16px" }}>
                                 {account.status === "cancelled" ? (
@@ -36132,39 +36580,101 @@ Instrucciones:
             })()}
           </IonModal>
 
-          <IonAlert
+          <IonModal
             isOpen={showSystemsChoiceAlert}
             onDidDismiss={() => setShowSystemsChoiceAlert(false)}
-            header="Opciones de Sistemas ⚙️"
-            subHeader="¿Qué deseas limpiar para este inquilino?"
-            message={`Solo se afectarán los datos de: ${selectedTenant?.name}`}
-            buttons={[
-              {
-                text: "Cancelar",
-                role: "cancel",
-                cssClass: "secondary"
-              },
-              {
-                text: "Limpiar Corte Actual",
-                cssClass: "text-rose-600 font-bold",
-                handler: async () => {
-                  try {
-                    await deleteCurrentCorteInFirebase(selectedTenant.id);
-                    triggerAppNotification("Sistemas ⚙️", "Mesas y pedidos reiniciados correctamente. ✅", "success");
-                  } catch (e: any) {
-                    triggerAppNotification("Error ❌", e.message, "warning");
-                  }
-                }
-              },
-              {
-                text: "Eliminar Todo el Historial ⚠️",
-                cssClass: "text-red-700 font-bold",
-                handler: () => {
-                  setShowDeleteAllHistoryConfirm(true);
-                }
-              }
-            ]}
-          />
+            className="auto-height-modal"
+          >
+            <div className="p-6 bg-white rounded-2xl shadow-2xl max-w-md mx-auto space-y-5 border border-slate-200">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2 m-0">
+                  <span>⚙️</span> Opciones de Sistemas
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowSystemsChoiceAlert(false)}
+                  className="text-slate-400 hover:text-slate-600 font-bold text-xl px-2 py-1 rounded-lg border-none bg-transparent cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
+                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider m-0">Inquilino Seleccionado:</p>
+                <p className="text-base font-extrabold text-slate-800 mt-1 m-0">{selectedTenant?.name || "Sin Nombre"}</p>
+              </div>
+
+              <p className="text-sm font-semibold text-slate-600 m-0">
+                ¿Qué deseas limpiar para este inquilino?
+              </p>
+
+              <div className="space-y-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSystemsChoiceAlert(false);
+                    setTimeout(async () => {
+                      try {
+                        const tid = selectedTenant?.id;
+                        if (!tid) {
+                          triggerAppNotification("Error ❌", "No se ha seleccionado ningún inquilino.", "warning");
+                          return;
+                        }
+                        triggerAppNotification("Sistemas ⚙️", "Limpiando corte de caja del inquilino...", "info");
+                        await deleteCurrentCorteInFirebase(tid);
+                        
+                        localStorage.removeItem(`pos_tables_${tid}`);
+                        localStorage.removeItem("pos_tables");
+                        localStorage.removeItem("pos_history");
+                        localStorage.removeItem("pos_cashier_sessions");
+                        localStorage.removeItem("pos_cash_movements");
+                        localStorage.removeItem("pos_expenses");
+
+                        setTables((prev: any[]) => prev.map((t: any) => t.tenantId === tid ? { ...t, status: "available", comandas: [], waiterId: null, activeAccount: null } : t));
+                        setHistory((prev: any[]) => prev.filter((h: any) => h.tenantId !== tid));
+                        setCashierSessions((prev: any[]) => prev.filter((s: any) => s.tenantId !== tid));
+                        setCashMovements((prev: any[]) => prev.filter((m: any) => m.tenantId !== tid));
+                        setExpenses((prev: any[]) => prev.filter((e: any) => e.tenantId !== tid));
+
+                        triggerAppNotification("Sistemas ⚙️", `Corte actual de ${selectedTenant?.name || ''} limpiado correctamente. ✅`, "success");
+                        
+                        setTimeout(() => {
+                          window.location.reload();
+                        }, 800);
+                      } catch (e: any) {
+                        console.error("Error al limpiar corte actual:", e);
+                        triggerAppNotification("Error ❌", e.message || "Error al limpiar corte", "warning");
+                      }
+                    }, 350);
+                  }}
+                  className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-3 px-4 rounded-xl shadow-md transition duration-200 flex items-center justify-center gap-2 cursor-pointer border-none text-sm uppercase tracking-wide"
+                >
+                  <span>🧹</span> Limpiar Corte Actual
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSystemsChoiceAlert(false);
+                    setTimeout(() => {
+                      setShowDeleteAllHistoryConfirm(true);
+                    }, 350);
+                  }}
+                  className="w-full bg-red-800 hover:bg-red-900 text-white font-black py-3 px-4 rounded-xl shadow-md transition duration-200 flex items-center justify-center gap-2 cursor-pointer border-none text-sm uppercase tracking-wide"
+                >
+                  <span>⚠️</span> Eliminar Todo el Historial
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSystemsChoiceAlert(false)}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-4 rounded-xl transition duration-200 cursor-pointer border-none text-sm"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </IonModal>
 
           <IonAlert
             isOpen={showDeleteAllHistoryConfirm}
@@ -36181,10 +36691,30 @@ Instrucciones:
                 cssClass: "text-red-700 font-bold",
                 handler: async () => {
                   try {
-                    await deleteAllTenantHistoryInFirebase(selectedTenant.id);
+                    const tid = selectedTenant?.id;
+                    if (!tid) return;
+                    triggerAppNotification("Sistemas ⚙️", "Eliminando todo el historial del inquilino...", "info");
+                    await deleteAllTenantHistoryInFirebase(tid);
+                    
+                    localStorage.removeItem(`pos_tables_${tid}`);
+                    localStorage.removeItem("pos_tables");
+                    localStorage.removeItem("pos_history");
+                    localStorage.removeItem("pos_cashier_sessions");
+                    localStorage.removeItem("pos_cash_movements");
+                    localStorage.removeItem("pos_expenses");
+
+                    setTables((prev: any[]) => prev.map((t: any) => t.tenantId === tid ? { ...t, status: "available", comandas: [], waiterId: null, activeAccount: null } : t));
+                    setHistory((prev: any[]) => prev.filter((h: any) => h.tenantId !== tid));
+                    setCashierSessions((prev: any[]) => prev.filter((s: any) => s.tenantId !== tid));
+                    setCashMovements((prev: any[]) => prev.filter((m: any) => m.tenantId !== tid));
+                    setExpenses((prev: any[]) => prev.filter((e: any) => e.tenantId !== tid));
+
                     triggerAppNotification("Sistemas ⚙️", "Historial completo eliminado correctamente. 🧹✅", "success");
+                    setTimeout(() => {
+                      window.location.reload();
+                    }, 800);
                   } catch (e: any) {
-                    triggerAppNotification("Error ❌", e.message, "warning");
+                    triggerAppNotification("Error ❌", e.message || "Error al eliminar historial", "warning");
                   }
                 }
               }
@@ -37237,9 +37767,24 @@ Instrucciones:
                             {/* Factura */}
                             <td className="py-3 px-4">
                               {acc.requiresInvoice ? (
-                                <span className="bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 rounded-md text-[11px] font-black">
-                                  📄 Sí (Factura) {acc.invoicePhone ? `📞 ${acc.invoicePhone}` : ""}
-                                </span>
+                                <div className="inline-flex items-center gap-1.5">
+                                  <span className="bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 rounded-md text-[11px] font-black">
+                                    📄 Factura
+                                  </span>
+                                  {acc.invoicePhone ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleSendWhatsAppInvoice(acc, e)}
+                                      className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black px-2 py-0.5 rounded-full text-xs shadow-sm transition cursor-pointer border border-emerald-500"
+                                      title="💬 Enviar WhatsApp solicitando Constancia Fiscal y enviar ticket"
+                                    >
+                                      <span>💬</span>
+                                      <span className="underline">({acc.invoicePhone})</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-stone-400 text-xs font-bold">(Sin tel)</span>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-stone-400 font-semibold">No</span>
                               )}

@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "cocinet-app",
+    "site": "ventas-foraneas",
     "public": "dist",
     "ignore": [
       "firebase.json",

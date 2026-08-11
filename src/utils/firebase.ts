@@ -17,13 +17,13 @@ try {
 
 // Configuración por defecto del sistema
 const defaultFirebaseConfig = {
-  apiKey: "AIzaSyA-pj8EA8Pl7CVM9P-L4lOLhzxadQVQujI",
-  authDomain: "cocinet-app.firebaseapp.com",
-  projectId: "cocinet-app",
-  storageBucket: "cocinet-app.firebasestorage.app",
-  messagingSenderId: "315374858436",
-  appId: "1:315374858436:web:c432699c575403bfe91991",
-  measurementId: "G-GX3HLJPQHW"
+  apiKey: "AIzaSyBMHlGSg_3BubOrOasqVVujGzZ-iqZceVQ",
+  authDomain: "ventas-foraneas.firebaseapp.com",
+  projectId: "ventas-foraneas",
+  storageBucket: "ventas-foraneas.firebasestorage.app",
+  messagingSenderId: "1097391142464",
+  appId: "1:1097391142464:web:a9ca554715dd0ae83a11a5",
+  measurementId: "G-0CQWD9QLTH"
 };
 
 const defaultDbId = "";

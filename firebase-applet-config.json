@@ -1,10 +1,10 @@
 {
-  "projectId": "cocinet-app",
-  "appId": "1:315374858436:web:c432699c575403bfe91991",
-  "apiKey": "AIzaSyA-pj8EA8Pl7CVM9P-L4lOLhzxadQVQujI",
-  "authDomain": "cocinet-app.firebaseapp.com",
+  "projectId": "ventas-foraneas",
+  "appId": "1:1097391142464:web:a9ca554715dd0ae83a11a5",
+  "apiKey": "AIzaSyBMHlGSg_3BubOrOasqVVujGzZ-iqZceVQ",
+  "authDomain": "ventas-foraneas.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
-  "storageBucket": "cocinet-app.firebasestorage.app",
-  "messagingSenderId": "315374858436",
-  "measurementId": "G-GX3HLJPQHW"
+  "storageBucket": "ventas-foraneas.firebasestorage.app",
+  "messagingSenderId": "1097391142464",
+  "measurementId": "G-0CQWD9QLTH"
 }

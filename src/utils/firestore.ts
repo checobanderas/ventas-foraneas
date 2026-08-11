@@ -1709,56 +1709,164 @@ export async function updatePedidoInFirebase(tenantId: string, pedidoId: string,
   await runWrite(updateDoc(ref, data));
 }
 
+function parseDocDateForDeletion(val: any): string {
+  if (!val) return "";
+  try {
+    if (typeof val === "string") return val.split("T")[0];
+    if (typeof val === "number") return new Date(val).toISOString().split("T")[0];
+    if (typeof val === "object" && typeof val.toDate === "function") {
+      return val.toDate().toISOString().split("T")[0];
+    }
+  } catch (e) {
+    console.error("Error parsing doc date:", e);
+  }
+  return "";
+}
+
 export async function deleteCurrentCorteInFirebase(tenantId: string) {
-  const batch = writeBatch(db);
-  
+  if (!tenantId) return;
+  const today = getMexicoISOString().split("T")[0];
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterday = yesterdayDate.toISOString().split("T")[0];
+
+  let opsCount = 0;
+  let batch = writeBatch(db);
+
+  const commitBatchIfNeeded = async (force = false) => {
+    opsCount++;
+    if (opsCount >= 350 || (force && opsCount > 0)) {
+      await batch.commit();
+      batch = writeBatch(db);
+      opsCount = 0;
+    }
+  };
+
+  const isRecentDate = (dStr: string) => {
+    if (!dStr) return false;
+    return dStr === today || dStr === yesterday;
+  };
+
   // 1. Reset all tables for this tenant
-  const tablesRef = collection(db, "tables");
-  const qTables = query(tablesRef, where("tenantId", "==", tenantId));
-  const tablesSnap = await getDocs(qTables);
-  
-  tablesSnap.forEach((docSnap) => {
-    batch.update(docSnap.ref, {
-      status: "available",
-      comandas: [],
-      waiterId: null,
-      updatedAt: getMexicoISOString()
-    });
-  });
+  try {
+    const tablesRef = collection(db, "tables");
+    const qTables = query(tablesRef, where("tenantId", "==", tenantId));
+    const tablesSnap = await getDocs(qTables);
+    for (const docSnap of tablesSnap.docs) {
+      batch.update(docSnap.ref, {
+        status: "available",
+        comandas: [],
+        waiterId: null,
+        activeAccount: null,
+        accountClosed: false,
+        accountPrinted: false,
+        updatedAt: getMexicoISOString()
+      });
+      await commitBatchIfNeeded();
+    }
+  } catch (e) {
+    console.warn("Could not reset tables:", e);
+  }
 
   // 2. Clear printer queue for this tenant
-  const pedidosRef = collection(db, "tenants", tenantId, "pedidos");
-  const pedidosSnap = await getDocs(pedidosRef);
-  pedidosSnap.forEach((docSnap) => {
-    batch.delete(docSnap.ref);
-  });
-
-  // 3. Clear today's history and movements for this tenant
-  const today = getMexicoISOString().split("T")[0];
-  
-  const historyRef = collection(db, "history");
-  const qHistory = query(historyRef, where("tenantId", "==", tenantId));
-  const historySnap = await getDocs(qHistory);
-  historySnap.forEach((docSnap) => {
-    const data = docSnap.data();
-    const date = data.timestamp ? (typeof data.timestamp === 'string' ? data.timestamp : data.timestamp.toDate().toISOString()).split("T")[0] : "";
-    if (date === today) {
+  try {
+    const pedidosRef = collection(db, "tenants", tenantId, "pedidos");
+    const pedidosSnap = await getDocs(pedidosRef);
+    for (const docSnap of pedidosSnap.docs) {
       batch.delete(docSnap.ref);
+      await commitBatchIfNeeded();
     }
-  });
+  } catch (e) {
+    console.warn("Could not clear pedidos:", e);
+  }
 
-  const movementsRef = collection(db, "cash_movements");
-  const qMovements = query(movementsRef, where("tenantId", "==", tenantId));
-  const movementsSnap = await getDocs(qMovements);
-  movementsSnap.forEach((docSnap) => {
-    const data = docSnap.data();
-    const date = (data.timestamp || data.date || "").split("T")[0];
-    if (date === today) {
-      batch.delete(docSnap.ref);
+  // 3. Clear recent history for this tenant
+  try {
+    const historyRef = collection(db, "history");
+    const qHistory = query(historyRef, where("tenantId", "==", tenantId));
+    const historySnap = await getDocs(qHistory);
+    for (const docSnap of historySnap.docs) {
+      const data = docSnap.data();
+      const date = parseDocDateForDeletion(data.timestamp || data.closedAt || data.date || data.createdAt);
+      if (!date || isRecentDate(date)) {
+        batch.delete(docSnap.ref);
+        await commitBatchIfNeeded();
+      }
     }
-  });
+  } catch (e) {
+    console.warn("Could not clear history:", e);
+  }
 
-  await batch.commit();
+  // 4. Clear recent cash movements for this tenant
+  try {
+    const movementsRef = collection(db, "cash_movements");
+    const qMovements = query(movementsRef, where("tenantId", "==", tenantId));
+    const movementsSnap = await getDocs(qMovements);
+    for (const docSnap of movementsSnap.docs) {
+      const data = docSnap.data();
+      const date = parseDocDateForDeletion(data.timestamp || data.date || data.createdAt);
+      if (!date || isRecentDate(date)) {
+        batch.delete(docSnap.ref);
+        await commitBatchIfNeeded();
+      }
+    }
+  } catch (e) {
+    console.warn("Could not clear cash movements:", e);
+  }
+
+  // 5. Clear recent expenses for this tenant
+  try {
+    const expRef = collection(db, "expenses");
+    const qExp = query(expRef, where("tenantId", "==", tenantId));
+    const expSnap = await getDocs(qExp);
+    for (const docSnap of expSnap.docs) {
+      const data = docSnap.data();
+      const date = parseDocDateForDeletion(data.timestamp || data.date || data.createdAt);
+      if (!date || isRecentDate(date)) {
+        batch.delete(docSnap.ref);
+        await commitBatchIfNeeded();
+      }
+    }
+  } catch (e) {
+    console.warn("Could not clear expenses:", e);
+  }
+
+  // 6. Clear recent arqueos for this tenant
+  try {
+    const arqRef = collection(db, "arqueos");
+    const qArq = query(arqRef, where("tenantId", "==", tenantId));
+    const arqSnap = await getDocs(qArq);
+    for (const docSnap of arqSnap.docs) {
+      const data = docSnap.data();
+      const date = parseDocDateForDeletion(data.timestamp || data.date || data.createdAt);
+      if (!date || isRecentDate(date)) {
+        batch.delete(docSnap.ref);
+        await commitBatchIfNeeded();
+      }
+    }
+  } catch (e) {
+    console.warn("Could not clear arqueos:", e);
+  }
+
+  // 7. Delete all open / recent cashier sessions for this tenant
+  try {
+    const sessionRef = collection(db, "cashier_sessions_v2");
+    const qSession = query(sessionRef, where("tenantId", "==", tenantId));
+    const sessionSnap = await getDocs(qSession);
+    for (const docSnap of sessionSnap.docs) {
+      const data = docSnap.data();
+      const date = parseDocDateForDeletion(data.openedAt || data.timestamp || data.date);
+      if (data.status === "open" || isRecentDate(date) || docSnap.id.includes(tenantId)) {
+        batch.delete(docSnap.ref);
+        await commitBatchIfNeeded();
+      }
+    }
+  } catch (e) {
+    console.warn("Could not clear cashier sessions:", e);
+  }
+
+  // Commit remaining writes
+  await commitBatchIfNeeded(true);
 }
 
 export async function deleteAllTenantHistoryInFirebase(tenantId: string) {
