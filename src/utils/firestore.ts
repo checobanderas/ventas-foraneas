@@ -2314,31 +2314,8 @@ export async function initializeDefaultTablesForTenant(tenantId: string) {
   const batch = writeBatch(db);
   let count = 0;
 
-  // 1. Salón Principal (Tables 1 - 25)
-  for (let i = 1; i <= 25; i++) {
-    const labelStr = `${i}`;
-    const key = `Salón Principal::${labelStr}`;
-    const docId = `table-${tenantId}-salon-${i}`;
-    if (!existingKeys.has(key) && !existingIds.has(docId)) {
-      const ref = doc(db, "tables", docId);
-      batch.set(ref, {
-        id: docId,
-        uid: docId,
-        label: labelStr,
-        shape: "local",
-        status: "available",
-        waiterId: null,
-        comandas: [],
-        zone: "Salón Principal",
-        tenantId: tenantId,
-        updatedAt: getMexicoISOString(),
-      });
-      count++;
-    }
-  }
-
-  // 2. Para Llevar (Tables P1 - P5)
-  for (let i = 1; i <= 5; i++) {
+  // 1. Para Llevar (P1 - P15)
+  for (let i = 1; i <= 15; i++) {
     const labelStr = `P${i}`;
     const key = `Para Llevar::${labelStr}`;
     const docId = `table-${tenantId}-takeout-${i}`;
@@ -2360,8 +2337,8 @@ export async function initializeDefaultTablesForTenant(tenantId: string) {
     }
   }
 
-  // 3. Servicio a Domicilio (Tables D1 - D5)
-  for (let i = 1; i <= 5; i++) {
+  // 2. Servicio a Domicilio (D1 - D15)
+  for (let i = 1; i <= 15; i++) {
     const labelStr = `D${i}`;
     const key1 = `Servicio a Domicilio::${labelStr}`;
     const key2 = `A Domicilio::${labelStr}`;

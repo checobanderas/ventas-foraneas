@@ -629,7 +629,7 @@ function createDefault30TablesList(tenantId: string) {
   return list;
 }
 function normalizeZoneName(rawZone?: string): string {
-  if (!rawZone) return "Salón Principal";
+  if (!rawZone) return "Para Llevar";
   const z = String(rawZone).trim().toLowerCase();
   if (z.includes("domicilio") || z.includes("delivery") || z === "d" || z === "a domicilio") {
     return "Servicio a Domicilio";
@@ -637,7 +637,7 @@ function normalizeZoneName(rawZone?: string): string {
   if (z.includes("llevar") || z.includes("takeout") || z === "p" || z === "para llevar") {
     return "Para Llevar";
   }
-  return "Salón Principal";
+  return "Para Llevar";
 }
 
 function ensureAll35TablesForTenant(existingTables: any[], tenantId: string) {
@@ -686,28 +686,8 @@ function ensureAll35TablesForTenant(existingTables: any[], tenantId: string) {
     }
   });
 
-  // Garantizar exactamente 25 mesas en Salón Principal (1 a 25)
-  for (let i = 1; i <= 25; i++) {
-    const labelStr = `${i}`;
-    const key = `Salón Principal::${labelStr}`;
-    if (!tableMap.has(key)) {
-      tableMap.set(key, {
-        id: `table-${safeTenantId}-salon-${i}`,
-        uid: `table-${safeTenantId}-salon-${i}`,
-        label: labelStr,
-        shape: "local",
-        status: "available",
-        waiterId: null,
-        comandas: [],
-        zone: "Salón Principal",
-        tenantId: safeTenantId,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-  }
-
-  // Garantizar mesas P1 a P5 en Para Llevar
-  for (let i = 1; i <= 5; i++) {
+  // Garantizar 15 slots P1 a P15 en Para Llevar
+  for (let i = 1; i <= 15; i++) {
     const labelStr = `P${i}`;
     const key = `Para Llevar::${labelStr}`;
     if (!tableMap.has(key)) {
@@ -726,8 +706,8 @@ function ensureAll35TablesForTenant(existingTables: any[], tenantId: string) {
     }
   }
 
-  // Garantizar mesas D1 a D5 en Servicio a Domicilio
-  for (let i = 1; i <= 5; i++) {
+  // Garantizar 15 slots D1 a D15 en Servicio a Domicilio
+  for (let i = 1; i <= 15; i++) {
     const labelStr = `D${i}`;
     const key1 = `Servicio a Domicilio::${labelStr}`;
     const key2 = `A Domicilio::${labelStr}`;
@@ -747,7 +727,10 @@ function ensureAll35TablesForTenant(existingTables: any[], tenantId: string) {
     }
   }
 
-  const finalResult = Array.from(tableMap.values());
+  // Filtrar para excluir Salón Principal y dejar solo Para Llevar y Servicio a Domicilio
+  const finalResult = Array.from(tableMap.values()).filter(
+    (t: any) => t.zone === "Para Llevar" || t.zone === "Servicio a Domicilio" || t.zone === "A Domicilio"
+  );
   const occupiedList = finalResult.filter((t: any) => t.status === "occupied" || (t.comandas && t.comandas.length > 0));
   if (occupiedList.length > 0) {
     console.log("⚡ [ENSURE_35_OUT] Occupied tables count:", occupiedList.length, occupiedList.map((t: any) => `Mesa ${t.label} (status=${t.status}, comandas=${t.comandas?.length})`));
@@ -14257,13 +14240,12 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
   );
 
   const zonesOrder: Record<string, number> = {
-    "Salón Principal": 1,
-    "Para Llevar": 2,
-    "Servicio a Domicilio": 3,
+    "Para Llevar": 1,
+    "Servicio a Domicilio": 2,
   };
   const zones = effectiveTables
-    .map((t) => t.zone || "Salón Principal")
-    .filter((v, i, a) => Boolean(v) && a.indexOf(v) === i)
+    .map((t) => t.zone || "Para Llevar")
+    .filter((v, i, a) => Boolean(v) && v !== "Salón Principal" && a.indexOf(v) === i)
     .sort((a, b) => {
       const orderA = zonesOrder[a as string] || 99;
       const orderB = zonesOrder[b as string] || 99;
@@ -14366,10 +14348,10 @@ const [pendingInvoiceTarget, setPendingInvoiceTarget] = useState<{
                 }}
               >
                 <i
-                  className="fa-solid fa-chair"
+                  className="fa-solid fa-motorcycle"
                   style={{ fontSize: "1.2rem" }}
                 ></i>{" "}
-                Mesas
+                Pedidos
               </IonLabel>
             </IonSegmentButton>
             <IonSegmentButton
